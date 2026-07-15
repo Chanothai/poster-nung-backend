@@ -1,0 +1,654 @@
+openapi: 3.1.0
+info:
+  title: Poster Nung API
+  version: "0.1.0"
+  description: >
+    REST API สำหรับ Movie Poster Original e-commerce — สต็อก=1 ต่อโปสเตอร์
+    เอกสารนี้ครอบคลุมเฉพาะ F1 (Authentication), F2 (Poster Catalog + Detail),
+    F3 (Cart & Reservation) — ดู schema ประกอบที่ docs/database-design.md
+servers:
+  - url: /api/v1
+
+tags:
+  - name: Auth
+    description: Registration, OTP verification, login, token refresh
+  - name: Posters
+    description: Public poster catalog and detail
+  - name: Cart
+    description: Reservation flow (ต้อง login) — จุดวิกฤต race-condition ของสต็อก=1
+
+security: []
+
+paths:
+  # ────────────────────────────── Auth ──────────────────────────────
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: สมัครสมาชิกใหม่
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: สมัครสำเร็จ — ระบบส่ง OTP ไปยัง email/phone แล้ว รอ verify
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "409":
+          description: Email นี้มีในระบบแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: EMAIL_ALREADY_REGISTERED
+                message: อีเมลนี้ถูกใช้สมัครสมาชิกไปแล้ว
+                details: null
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /auth/verify-otp:
+    post:
+      tags: [Auth]
+      summary: ยืนยัน OTP เพื่อเปิดใช้งานบัญชี (verify ผ่าน = auto-login ออก token ทันที)
+      operationId: verifyOtp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OTPVerifyRequest"
+      responses:
+        "200":
+          description: ยืนยันสำเร็จ ออก JWT ให้ทันที
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          description: OTP ไม่ถูกต้องหรือหมดอายุ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalid:
+                  summary: กรอกรหัสผิด
+                  value:
+                    error_code: OTP_INVALID
+                    message: รหัส OTP ไม่ถูกต้อง
+                    details: null
+                expired:
+                  summary: รหัสหมดอายุ
+                  value:
+                    error_code: OTP_EXPIRED
+                    message: รหัส OTP หมดอายุแล้ว กรุณาขอรหัสใหม่
+                    details: null
+        "404":
+          description: ไม่พบผู้ใช้ตาม email ที่ระบุ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: USER_NOT_FOUND
+                message: ไม่พบบัญชีผู้ใช้นี้ในระบบ
+                details: null
+        "429":
+          description: >
+            มี 2 สาเหตุแยกกันด้วย error_code — OTP_LOCKED (กรอกผิดเกิน 5
+            ครั้งของรหัสเดียวกัน รหัสนั้นถูก invalidate ต้องขอใหม่) หรือ
+            OTP_RATE_LIMITED (ขอรหัสเกิน 5 ครั้ง/10 นาที)
+          headers:
+            Retry-After:
+              description: จำนวนวินาทีก่อนลองใหม่ได้
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                locked:
+                  summary: กรอกผิดเกิน threshold ของรหัสเดียว
+                  value:
+                    error_code: OTP_LOCKED
+                    message: กรอกรหัสผิดเกินจำนวนที่กำหนด กรุณาขอรหัส OTP ใหม่
+                    details: null
+                rate_limited:
+                  summary: ขอรหัสเกิน rate-limit
+                  value:
+                    error_code: OTP_RATE_LIMITED
+                    message: ขอรหัส OTP บ่อยเกินไป กรุณาลองใหม่ภายหลัง
+                    details: null
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: เข้าสู่ระบบด้วย email/password
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: เข้าสู่ระบบสำเร็จ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: >
+            Email หรือ password ไม่ถูกต้อง — ใช้ข้อความเดียวกันทั้งกรณี
+            email ไม่มีในระบบและกรณี password ผิด เพื่อป้องกัน user
+            enumeration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: INVALID_CREDENTIALS
+                message: อีเมลหรือรหัสผ่านไม่ถูกต้อง
+                details: null
+        "403":
+          description: บัญชียังไม่ได้ยืนยัน OTP
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: ACCOUNT_NOT_VERIFIED
+                message: กรุณายืนยัน OTP ก่อนเข้าสู่ระบบ
+                details: null
+        "429":
+          description: Login ถี่เกินไป (rate-limit ตาม CLAUDE.md Global Rule 5)
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: LOGIN_RATE_LIMITED
+                message: พยายามเข้าสู่ระบบบ่อยเกินไป กรุณาลองใหม่ภายหลัง
+                details: null
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: ขอ access token ใหม่ด้วย refresh token
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: ออก access/refresh token ชุดใหม่
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: Refresh token ไม่ถูกต้อง หมดอายุ หรือถูก revoke แล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: REFRESH_TOKEN_INVALID
+                message: Refresh token ไม่ถูกต้องหรือหมดอายุ กรุณาเข้าสู่ระบบใหม่
+                details: null
+
+  # ──────────────────────────── Posters ────────────────────────────
+  /posters:
+    get:
+      tags: [Posters]
+      summary: ดูรายการโปสเตอร์ (filter + pagination)
+      operationId: listPosters
+      parameters:
+        - name: era_decade
+          in: query
+          schema:
+            type: integer
+          example: 1980
+        - name: condition_grade
+          in: query
+          schema:
+            $ref: "#/components/schemas/PosterCondition"
+        - name: min_price
+          in: query
+          schema:
+            type: number
+            format: decimal
+            minimum: 0
+        - name: max_price
+          in: query
+          schema:
+            type: number
+            format: decimal
+            minimum: 0
+        - name: in_stock_only
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        "200":
+          description: รายการโปสเตอร์ตามเงื่อนไข filter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedPosterList"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /posters/{poster_id}:
+    get:
+      tags: [Posters]
+      summary: ดูรายละเอียดโปสเตอร์ 1 ชิ้น
+      operationId: getPosterDetail
+      parameters:
+        - name: poster_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: รายละเอียดโปสเตอร์ครบ (รวม authenticity/provenance)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosterDetailResponse"
+        "404":
+          description: ไม่พบโปสเตอร์ตาม id ที่ระบุ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: POSTER_NOT_FOUND
+                message: ไม่พบโปสเตอร์นี้
+                details: null
+
+  # ────────────────────────── Cart / Reservation ──────────────────────────
+  /cart/reserve/{poster_id}:
+    post:
+      tags: [Cart]
+      summary: จองโปสเตอร์ (สต็อก=1 — จุดวิกฤตของ race condition)
+      description: >
+        ล็อก row ของ poster ด้วย `SELECT ... FOR UPDATE` ใน transaction เดียว
+        ก่อนสร้าง reservation — ดู docs/database-design.md §6
+      operationId: reservePoster
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: poster_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "201":
+          description: จองสำเร็จ — reservation จะหมดอายุใน 15 นาที
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReservationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: ไม่พบโปสเตอร์ตาม id ที่ระบุ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: POSTER_NOT_FOUND
+                message: ไม่พบโปสเตอร์นี้
+                details: null
+        "409":
+          description: >
+            โปสเตอร์นี้ถูกจองหรือขายไปแล้ว (status ไม่ใช่ available ตอนที่
+            ได้ row lock) — นี่คือผลลัพธ์ตรงของ concurrency defense ที่ระบุใน
+            docs/database-design.md §6, ต้องมี acceptance test จำลอง 2
+            request พร้อมกันแล้วได้ 409 แค่ 1 ฝั่ง
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: POSTER_NOT_AVAILABLE
+                message: โปสเตอร์นี้ถูกจองหรือขายไปแล้ว
+                details: null
+        "429":
+          description: จองถี่เกินไป (rate-limit ตาม CLAUDE.md Global Rule 5)
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: RESERVE_RATE_LIMITED
+                message: พยายามจองบ่อยเกินไป กรุณาลองใหม่ภายหลัง
+                details: null
+
+  /cart/reservation/{reservation_id}:
+    delete:
+      tags: [Cart]
+      summary: ยกเลิกการจอง (เฉพาะเจ้าของ reservation)
+      operationId: cancelReservation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: reservation_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: ยกเลิกสำเร็จ — poster กลับเป็น available
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: reservation นี้ไม่ใช่ของผู้ใช้ที่ login อยู่ (ownership check)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: FORBIDDEN
+                message: คุณไม่มีสิทธิ์ยกเลิกการจองนี้
+                details: null
+        "404":
+          description: ไม่พบ reservation ตาม id ที่ระบุ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: RESERVATION_NOT_FOUND
+                message: ไม่พบรายการจองนี้
+                details: null
+        "409":
+          description: reservation นี้ไม่ได้อยู่สถานะ active แล้ว (ยกเลิกซ้ำ/หมดอายุ/converted ไปแล้ว)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: RESERVATION_NOT_ACTIVE
+                message: รายการจองนี้ไม่ได้อยู่ในสถานะที่ยกเลิกได้แล้ว
+                details: null
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Unauthorized:
+      description: ไม่ได้แนบ token หรือ token ไม่ถูกต้อง/หมดอายุ
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error_code: UNAUTHORIZED
+            message: กรุณาเข้าสู่ระบบ
+            details: null
+    ValidationError:
+      description: ข้อมูล request ไม่ผ่าน validation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error_code: VALIDATION_ERROR
+            message: ข้อมูลที่ส่งมาไม่ถูกต้อง
+            details:
+              - field: email
+                message: invalid email format
+
+  schemas:
+    # ── enums (ตรงกับ docs/database-design.md §3) ──
+    PosterStatus:
+      type: string
+      enum: [available, reserved, sold]
+    ReservationStatus:
+      type: string
+      enum: [active, expired, converted]
+    PosterCondition:
+      type: string
+      enum: [mint, near_mint, very_fine, fine, very_good, good, fair, poor]
+
+    # ── request schemas ──
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          minLength: 8
+        phone:
+          type: [string, "null"]
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    OTPVerifyRequest:
+      type: object
+      required: [email, code]
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+          minLength: 6
+          maxLength: 6
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
+    # ── response schemas ──
+    UserResponse:
+      type: object
+      description: ไม่มี hashed_password ตาม CLAUDE.md Global Rule 1
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        phone:
+          type: [string, "null"]
+        is_verified:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          example: bearer
+
+    PosterImage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        is_primary:
+          type: boolean
+        sort_order:
+          type: integer
+
+    PosterListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        price:
+          type: number
+          format: decimal
+        status:
+          $ref: "#/components/schemas/PosterStatus"
+        condition_grade:
+          $ref: "#/components/schemas/PosterCondition"
+        era_decade:
+          type: [integer, "null"]
+        studio:
+          type: [string, "null"]
+        primary_image_url:
+          type: [string, "null"]
+          format: uri
+
+    PosterDetailResponse:
+      allOf:
+        - $ref: "#/components/schemas/PosterListItem"
+        - type: object
+          properties:
+            tmdb_id:
+              type: [integer, "null"]
+            size:
+              type: [string, "null"]
+            description:
+              type: [string, "null"]
+            is_authenticated:
+              type: boolean
+            authenticity_note:
+              type: [string, "null"]
+            provenance:
+              type: [string, "null"]
+            images:
+              type: array
+              items:
+                $ref: "#/components/schemas/PosterImage"
+            created_at:
+              type: string
+              format: date-time
+
+    PaginatedPosterList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosterListItem"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    ReservationResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        poster_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/ReservationStatus"
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    # ── error envelope (custom — ไม่ใช้ FastAPI default {"detail": ...}) ──
+    ValidationErrorDetail:
+      type: object
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [error_code, message]
+      properties:
+        error_code:
+          type: string
+          description: SNAKE_CASE machine-readable code — ดูตารางเต็มใน docs/api-contract-f1-f3.md
+        message:
+          type: string
+          description: ข้อความสำหรับแสดงผล (ภาษาไทย)
+        details:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/ValidationErrorDetail"

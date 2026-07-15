@@ -1,0 +1,86 @@
+# ============================
+# Python
+# ============================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+
+# ============================
+# Virtual Environment
+# ============================
+venv/
+.venv/
+env/
+ENV/
+
+# ============================
+# CRITICAL — Secrets & Credentials (ห้ามหลุดขึ้น GitHub เด็ดขาด)
+# ============================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# ============================
+# Testing / Coverage
+# ============================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+# ============================
+# Type checking / Linting cache
+# ============================
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+
+# ============================
+# Database (local dev artifacts)
+# ============================
+*.sqlite3
+*.db
+# หมายเหตุ: alembic/versions/*.py คือ migration history — ต้อง commit เข้า git เสมอ
+# ห้าม ignore โฟลเดอร์นี้เด็ดขาด เพราะเป็นส่วนหนึ่งของ schema history ที่ทีมต้องใช้ร่วมกัน
+
+# ============================
+# Docker (local volumes ถ้าใช้ bind mount แทน named volume)
+# ============================
+# ถ้าเปลี่ยนจาก named volume (pgdata) เป็น bind mount ในอนาคต ให้เพิ่มบรรทัดนี้:
+# data/
+
+# ============================
+# IDE / Editor
+# ============================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ============================
+# OS-specific
+# ============================
+.DS_Store
+Thumbs.db
+
+# ============================
+# Logs
+# ============================
+*.log
+logs/
+
+# ============================
+# Jupyter (เผื่อใช้ notebook ตอน explore ข้อมูล)
+# ============================
+.ipynb_checkpoints/
