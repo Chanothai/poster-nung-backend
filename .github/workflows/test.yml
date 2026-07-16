@@ -1,0 +1,117 @@
+# CI/CD — test (F6) → build once → promote image sha เดิมข้าม sit → uat → production
+#
+# ทำไมรวม build/deploy ไว้ในไฟล์เดียวกับ test (ไม่แยก deploy.yml):
+#   GitHub Actions `needs:` อ้าง job ได้เฉพาะ "ในไฟล์ workflow เดียวกัน" เท่านั้น
+#   การแยกไฟล์ต้องใช้ `workflow_run` (คนละกลไก, ไม่ใช่ needs:) และ gate ได้อ่อนกว่า
+#   → รวมไฟล์เดียวเพื่อให้ build/deploy `needs: test` จริง และ promote ด้วย GitHub
+#     Environments (required reviewers) เป็น gate ระหว่าง env
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # ---------- F6: test (postgres + alembic + pytest + ruff + black) ----------
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: poster_app
+          POSTGRES_PASSWORD: poster_pass
+          POSTGRES_DB: poster_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # config ที่ settings ต้องมีตอน import (12-Factor: มาจาก environment)
+      ENVIRONMENT: sit
+      DATABASE_URL: postgresql+asyncpg://poster_app:poster_pass@localhost:5432/poster_db
+      JWT_SECRET: ci-dummy-secret-not-a-real-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install deps (runtime + dev tooling)
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Format check (black)
+        run: black --check .
+      - name: Migrations smoke (alembic upgrade head)
+        run: alembic upgrade head
+      - name: Tests (pytest — conftest สร้าง poster_nung_test แยกเอง)
+        run: pytest
+
+  # ---------- build once: image tag = git sha, push ghcr.io ----------
+  build:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # tag = commit sha → เป็น artifact เดียวที่ promote ข้ามทุก env (build ครั้งเดียว)
+          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+  # ---------- promote sha เดิม: sit → uat → production (ไม่ build ใหม่) ----------
+  deploy-sit:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: sit
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy image sha to SIT
+        env:
+          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_TAG: ${{ github.sha }}
+          # ตั้งเป็น per-environment variable ใน GitHub (docker context ของ host ปลายทาง)
+          DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET }}
+        run: ./.github/scripts/deploy.sh sit
+
+  deploy-uat:
+    needs: deploy-sit
+    runs-on: ubuntu-latest
+    environment: uat # ตั้ง required reviewers ใน GitHub Environment = gate promote
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy same image sha to UAT
+        env:
+          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_TAG: ${{ github.sha }}
+          # ตั้งเป็น per-environment variable ใน GitHub (docker context ของ host ปลายทาง)
+          DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET }}
+        run: ./.github/scripts/deploy.sh uat
+
+  deploy-production:
+    needs: deploy-uat
+    runs-on: ubuntu-latest
+    environment: production # required reviewers = manual approval gate
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy same image sha to PRODUCTION
+        env:
+          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_TAG: ${{ github.sha }}
+          # ตั้งเป็น per-environment variable ใน GitHub (docker context ของ host ปลายทาง)
+          DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET }}
+        run: ./.github/scripts/deploy.sh production
