@@ -1,4 +1,21 @@
+# Base stack (app + db) — deploy ต่อ env ด้วย override file:
+#   docker compose -f docker-compose.yml -f docker-compose.<env>.yml --env-file .env.<env> up -d
+# local dev รัน DB อย่างเดียวได้: docker compose up -d db  (แล้วรัน uvicorn บน host)
 services:
+  app:
+    build: .
+    # IMAGE_TAG=git sha ตอน deploy (build once ที่ CI) / 'local' ตอน dev
+    image: ${IMAGE_REGISTRY:-posternung}:${IMAGE_TAG:-local}
+    env_file:
+      - path: .env          # local dev (optional — ตอน deploy ใช้ override ชี้ .env.<env>)
+        required: false
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   db:
     image: postgres:16
     environment:
@@ -15,5 +32,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
 volumes:
   pgdata:

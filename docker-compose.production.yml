@@ -1,0 +1,15 @@
+# PRODUCTION override — docker compose -f docker-compose.yml -f docker-compose.production.yml --env-file .env.production up -d
+# ต้อง pull image sha เดียวกับที่ผ่าน uat มา (ไม่ build ใหม่): เพิ่ม --no-build ตอน deploy
+services:
+  app:
+    container_name: posternung-production-app
+    env_file: !reset
+      - .env.production        # config ของ production (DEBUG/DOCS ต้อง false — config validator บังคับ)
+  db:
+    container_name: posternung-production-db
+    ports: !reset []           # ไม่ expose DB port ออกนอก host (เข้าถึงได้เฉพาะใน docker network)
+    volumes: !reset
+      - pgdata-production:/var/lib/postgresql/data
+
+volumes:
+  pgdata-production:

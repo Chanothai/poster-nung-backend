@@ -1,0 +1,14 @@
+# UAT override — docker compose -f docker-compose.yml -f docker-compose.uat.yml --env-file .env.uat up -d
+# ต้อง pull image sha เดียวกับที่ผ่าน sit มา (ไม่ build ใหม่): เพิ่ม --no-build ตอน deploy
+services:
+  app:
+    container_name: posternung-uat-app
+    env_file: !reset
+      - .env.uat               # config ของ uat เท่านั้น (DB คนละตัวกับ sit/production)
+  db:
+    container_name: posternung-uat-db
+    volumes: !reset
+      - pgdata-uat:/var/lib/postgresql/data
+
+volumes:
+  pgdata-uat:

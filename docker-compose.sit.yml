@@ -1,0 +1,14 @@
+# SIT override — docker compose -f docker-compose.yml -f docker-compose.sit.yml --env-file .env.sit up -d
+# ต้อง pull image sha ที่ promote มา (ไม่ build ใหม่): เพิ่ม --no-build ตอน deploy
+services:
+  app:
+    container_name: posternung-sit-app
+    env_file: !reset
+      - .env.sit               # config ของ sit เท่านั้น (DATABASE_URL ชี้ db ของ sit)
+  db:
+    container_name: posternung-sit-db
+    volumes: !reset
+      - pgdata-sit:/var/lib/postgresql/data
+
+volumes:
+  pgdata-sit:
