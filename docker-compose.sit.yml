@@ -3,11 +3,11 @@
 services:
   app:
     container_name: posternung-sit-app
-    env_file: !reset
+    env_file: !override        # แทนที่ base [.env] ด้วย .env.sit (ไม่ใช่ !reset ที่ลบทิ้ง)
       - .env.sit               # config ของ sit เท่านั้น (DATABASE_URL ชี้ db ของ sit)
   db:
     container_name: posternung-sit-db
-    volumes: !reset
+    volumes: !override
       - pgdata-sit:/var/lib/postgresql/data
 
 volumes:

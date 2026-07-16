@@ -3,11 +3,11 @@
 services:
   app:
     container_name: posternung-uat-app
-    env_file: !reset
+    env_file: !override        # แทนที่ base [.env] ด้วย .env.uat (ไม่ใช่ !reset ที่ลบทิ้ง)
       - .env.uat               # config ของ uat เท่านั้น (DB คนละตัวกับ sit/production)
   db:
     container_name: posternung-uat-db
-    volumes: !reset
+    volumes: !override
       - pgdata-uat:/var/lib/postgresql/data
 
 volumes:
