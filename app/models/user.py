@@ -37,9 +37,7 @@ class User(Base, TimestampMixin):
 
 class OtpCode(Base, CreatedAtMixin):
     __tablename__ = "otp_codes"
-    __table_args__ = (
-        Index("ix_otp_codes_user_created", "user_id", "created_at"),
-    )
+    __table_args__ = (Index("ix_otp_codes_user_created", "user_id", "created_at"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -68,9 +66,7 @@ class RefreshToken(Base, CreatedAtMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    token_hash: Mapped[str] = mapped_column(
-        String(255), unique=True, nullable=False
-    )
+    token_hash: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
