@@ -1,0 +1,7 @@
+# Dev/test-only tooling — pin ให้ CI/local ตรงกัน
+# runtime image (Dockerfile) ใช้แค่ requirements.txt เท่านั้น ไม่รวมไฟล์นี้
+black==26.5.1
+httpx==0.28.1
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.15.21
