@@ -1,0 +1,6 @@
+# Revisions to ignore in `git blame` (formatting-only, no logic change).
+# เปิดใช้: git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub อ่านไฟล์นี้อัตโนมัติในหน้า blame)
+
+# style: apply black formatting (first black run on F0)
+6bfb8cb08cf1ad06f42120eaf80de9538542c54f
