@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import security
+from app.core.config import settings
 from app.core.exceptions import (
     AccountNotVerified,
     EmailAlreadyRegistered,
@@ -27,7 +28,6 @@ from app.schemas.auth import (
 )
 
 OTP_EXPIRE_MINUTES = 10
-OTP_MAX_ATTEMPTS = 5
 
 
 async def register(session: AsyncSession, data: RegisterRequest) -> tuple[User, str]:
@@ -75,7 +75,7 @@ async def verify_otp(session: AsyncSession, data: OTPVerifyRequest) -> TokenResp
         raise OtpInvalid()
 
     # ครบ threshold ผิด 5 ครั้งของโค้ดเดียว → invalidate โค้ดนั้น บังคับขอใหม่
-    if otp.attempt_count >= OTP_MAX_ATTEMPTS:
+    if otp.attempt_count >= settings.OTP_MAX_ATTEMPTS:
         await otp_repository.mark_consumed(session, otp.id)
         raise OtpLocked()
 

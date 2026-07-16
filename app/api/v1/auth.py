@@ -38,7 +38,8 @@ async def register(
 
 
 @router.post("/verify-otp", response_model=TokenResponse)
-@limiter.limit("5/10 minutes")
+# callable — slowapi ประเมิน limit string ตอน request จาก config (Global Rule 5)
+@limiter.limit(lambda: f"{settings.OTP_RATE_LIMIT_PER_10MIN}/10 minutes")
 async def verify_otp(
     request: Request,
     response: Response,  # ให้ slowapi inject rate-limit headers เข้า response นี้ (ไม่ใช้ตรงๆ)
