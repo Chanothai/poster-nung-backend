@@ -1,7 +1,7 @@
 # CLAUDE.md — Poster Nung Backend (FastAPI)
 
 > ไฟล์นี้โหลดอัตโนมัติทุก session · เก็บเฉพาะ rule + feature workflow
-> เรื่อง environment setup อยู่ที่ `$HOME/Destop/frameshine/posternung-feature-md/backend-setup-step-by-step.md` แยกต่างหาก
+> เรื่อง environment/deploy setup อยู่ที่ `.claude/rules/environments.md` (path-scoped rule — โหลดเข้า context เฉพาะตอนแตะไฟล์ config/deploy)
 
 ---
 
