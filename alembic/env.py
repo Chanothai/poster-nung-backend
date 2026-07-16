@@ -17,7 +17,9 @@ config = context.config
 
 # อ่าน DATABASE_URL จาก settings (.env) แทนค่าใน alembic.ini
 # escape '%' เป็น '%%' เพราะ ConfigParser ตีความ '%' เป็น interpolation (เช่น %40 ในรหัสผ่าน)
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
+# รองรับ override ผ่าน config.attributes (ใช้โดย tests/conftest.py ชี้ไป test DB แยก)
+_db_url = config.attributes.get("sqlalchemy_url_override") or settings.DATABASE_URL
+config.set_main_option("sqlalchemy.url", _db_url.replace("%", "%%"))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

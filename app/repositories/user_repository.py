@@ -1,0 +1,32 @@
+"""User table access — thin DB layer (ไม่มี business logic)."""
+
+import uuid
+
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.user import User
+
+
+async def get_by_email(session: AsyncSession, email: str) -> User | None:
+    result = await session.execute(select(User).where(User.email == email))
+    return result.scalar_one_or_none()
+
+
+async def create(
+    session: AsyncSession,
+    *,
+    email: str,
+    hashed_password: str,
+    phone: str | None = None,
+) -> User:
+    user = User(email=email, hashed_password=hashed_password, phone=phone)
+    session.add(user)
+    await session.flush()  # ให้ได้ id/created_at กลับมาโดยไม่ commit
+    return user
+
+
+async def set_verified(session: AsyncSession, user_id: uuid.UUID) -> None:
+    await session.execute(
+        update(User).where(User.id == user_id).values(is_verified=True)
+    )
