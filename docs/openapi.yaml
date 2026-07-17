@@ -99,6 +99,16 @@ paths:
                 error_code: USER_NOT_FOUND
                 message: ไม่พบบัญชีผู้ใช้นี้ในระบบ
                 details: null
+        "409":
+          description: บัญชีนี้ยืนยัน OTP ไปแล้ว เรียกซ้ำไม่ได้
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: ACCOUNT_ALREADY_VERIFIED
+                message: บัญชีนี้ยืนยันแล้ว ไม่ต้องยืนยันซ้ำ
+                details: null
         "429":
           description: >
             มี 2 สาเหตุแยกกันด้วย error_code — OTP_LOCKED (กรอกผิดเกิน 5
@@ -210,6 +220,32 @@ paths:
               example:
                 error_code: REFRESH_TOKEN_INVALID
                 message: Refresh token ไม่ถูกต้องหรือหมดอายุ กรุณาเข้าสู่ระบบใหม่
+                details: null
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: ข้อมูลผู้ใช้ปัจจุบันจาก access token (protected)
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ข้อมูล user ของ access token ที่แนบมา
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "401":
+          description: >
+            ไม่มี token / token ผิด / หมดอายุ / ใช้ refresh token แทน access
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: UNAUTHORIZED
+                message: กรุณาเข้าสู่ระบบ
                 details: null
 
   # ──────────────────────────── Posters ────────────────────────────

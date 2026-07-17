@@ -30,9 +30,15 @@
 | Method | Path | Request body | Success | Error status → code |
 |---|---|---|---|---|
 | POST | `/auth/register` | `email, password, phone?` | `201` UserResponse | `409` EMAIL_ALREADY_REGISTERED · `422` VALIDATION_ERROR |
-| POST | `/auth/verify-otp` | `email, code` | `200` TokenResponse *(verify ผ่าน = auto-login)* | `400` OTP_INVALID · `400` OTP_EXPIRED · `429` OTP_LOCKED · `429` OTP_RATE_LIMITED · `404` USER_NOT_FOUND |
+| POST | `/auth/verify-otp` | `email, code` | `200` TokenResponse *(verify ผ่าน = auto-login)* | `400` OTP_INVALID · `400` OTP_EXPIRED · `409` ACCOUNT_ALREADY_VERIFIED · `429` OTP_LOCKED · `429` OTP_RATE_LIMITED · `404` USER_NOT_FOUND |
 | POST | `/auth/login` | `email, password` | `200` TokenResponse | `401` INVALID_CREDENTIALS · `403` ACCOUNT_NOT_VERIFIED · `429` LOGIN_RATE_LIMITED |
 | POST | `/auth/refresh` | `refresh_token` | `200` TokenResponse | `401` REFRESH_TOKEN_INVALID |
+
+### Auth (protected) — `/auth` ต้องแนบ `Authorization: Bearer <access_token>`
+
+| Method | Path | Success | Error status → code |
+|---|---|---|---|
+| GET | `/auth/me` | `200` UserResponse | `401` UNAUTHORIZED (ไม่มี/token ผิด/หมดอายุ/ใช้ refresh แทน access) |
 
 ### Posters — `/posters` (public)
 
@@ -63,6 +69,7 @@
 | `USER_NOT_FOUND` | 404 | `POST /auth/verify-otp` | ไม่พบ user ตาม email |
 | `INVALID_CREDENTIALS` | 401 | `POST /auth/login` | email/password ผิด (ข้อความเดียวกันทั้ง 2 กรณี กัน enumeration) |
 | `ACCOUNT_NOT_VERIFIED` | 403 | `POST /auth/login` | ยังไม่ยืนยัน OTP |
+| `ACCOUNT_ALREADY_VERIFIED` | 409 | `POST /auth/verify-otp` | บัญชี verify แล้ว เรียก verify ซ้ำ |
 | `LOGIN_RATE_LIMITED` | 429 | `POST /auth/login` | login ถี่เกินไป |
 | `REFRESH_TOKEN_INVALID` | 401 | `POST /auth/refresh` | token ผิด/หมดอายุ/ถูก revoke |
 | `POSTER_NOT_FOUND` | 404 | `GET /posters/{id}`, `POST /cart/reserve/{id}` | ไม่มีโปสเตอร์นี้ |

@@ -33,6 +33,13 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
+# bcrypt hash คงที่ของ string สุ่ม — ใช้ verify ทิ้งตอน login ที่ไม่พบ user
+# เพื่อให้เวลาตอบ (bcrypt cost) เท่ากับเคส password ผิด กัน timing-based user enumeration
+DUMMY_PASSWORD_HASH = bcrypt.hashpw(
+    secrets.token_hex(16).encode("utf-8"), bcrypt.gensalt()
+).decode("utf-8")
+
+
 # ---- OTP ----
 def generate_otp() -> str:
     """สุ่ม OTP 6 หลักแบบ cryptographically secure."""
