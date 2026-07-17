@@ -155,9 +155,22 @@ Acceptance: test ว่า user A เปิด order ของ user B ได้ 
 - [ ] (F3) รัน concurrency test จริง + อ่านโค้ดยืนยัน `FOR UPDATE`
 - [ ] (F4) `grep -ri "card_number\|cvv\|expiry" app/` ต้องว่าง
 - [ ] (F5) ทุก endpoint ที่ดึงข้อมูล user เช็ค ownership แล้ว
-- [ ] commit: `feat(<scope>): <subject>` (scope = ชื่อ feature เช่น auth, reservation)
+- [ ] commit: `feat(<scope>): <subject>` (scope = ชื่อ feature เช่น auth, reservation) — บน feature branch ตาม Git Workflow ด้านล่าง
+
+## Git Workflow (บังคับ — repo protect `master` ระดับ GitHub server-side)
+`master` protect ด้วย GitHub ruleset จริง (ไม่ใช่แค่ข้อตกลง) — push ตรงเข้า `master`
+ถูก GitHub ปฏิเสธเสมอ ไม่มีข้อยกเว้นแม้ admin (`current_user_can_bypass: never`)
+- ทุก feature/API service ใหม่ → แยก branch เสมอ ตั้งชื่อ `feature/<scope>` (เช่น
+  `feature/f2-poster-catalog`) หรือ `fix/<scope>` สำหรับ bug fix
+- เปิด PR เข้า `master` แล้ว**หยุดรอผู้ใช้ review + merge เอง** — ห้าม auto-merge
+  แม้ CI (`test` job) จะผ่านแล้วก็ตาม
+- `master` require: PR (ไม่บังคับ approval count — solo dev), status check `test`
+  ผ่าน, ห้าม force-push, ห้ามลบ branch (ดู `.claude/rules/environments.md` ไม่เกี่ยว
+  — rule นี้เป็น GitHub repo setting ไม่ใช่ path-scoped file)
 
 ## ห้ามทำโดยไม่ถาม
 - ห้าม auto-generate secret/JWT key ใส่ค่า default ที่ดูใช้งานได้จริง (ต้องเป็น placeholder)
 - ห้าม drop table / alembic downgrade
 - ห้าม commit `.env`
+- ห้าม push ตรงเข้า `master` เด็ดขาด (ถูก GitHub ปฏิเสธอยู่แล้ว แต่ห้ามพยายามด้วย —
+  ดู Git Workflow ด้านบน)
