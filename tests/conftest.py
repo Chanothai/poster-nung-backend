@@ -95,6 +95,7 @@ async def client(db_session: AsyncSession):
     """
     from httpx import ASGITransport, AsyncClient
 
+    from app.core.config import settings
     from app.core.database import get_db
     from app.core.limiter import limiter
     from app.main import app
@@ -105,10 +106,15 @@ async def client(db_session: AsyncSession):
     app.dependency_overrides[get_db] = _override_get_db
     limiter_was_enabled = limiter.enabled
     limiter.enabled = False
+    # บังคับ DEBUG=true ระหว่าง integration test เพื่อให้ register คืน dev_otp
+    # (test เอา otp ไป verify ต่อ) — ไม่งั้นบน CI ที่ไม่ตั้ง DEBUG จะได้ None แล้ว test พัง
+    debug_was = settings.DEBUG
+    settings.DEBUG = True
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
+    settings.DEBUG = debug_was
     limiter.enabled = limiter_was_enabled
     app.dependency_overrides.clear()
