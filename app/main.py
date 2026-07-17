@@ -89,7 +89,7 @@ async def validation_error_handler(
         for err in exc.errors()
     ]
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         content={
             "error_code": "VALIDATION_ERROR",
             "message": "ข้อมูลที่ส่งมาไม่ถูกต้อง",

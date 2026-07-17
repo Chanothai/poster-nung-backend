@@ -73,7 +73,19 @@ class AccountNotVerified(AppError):
     message = "กรุณายืนยัน OTP ก่อนเข้าสู่ระบบ"
 
 
+class AccountAlreadyVerified(AppError):
+    status_code = 409
+    error_code = "ACCOUNT_ALREADY_VERIFIED"
+    message = "บัญชีนี้ยืนยันแล้ว ไม่ต้องยืนยันซ้ำ"
+
+
 class RefreshTokenInvalid(AppError):
     status_code = 401
     error_code = "REFRESH_TOKEN_INVALID"
     message = "Refresh token ไม่ถูกต้องหรือหมดอายุ กรุณาเข้าสู่ระบบใหม่"
+
+
+class Unauthorized(AppError):
+    status_code = 401
+    error_code = "UNAUTHORIZED"
+    message = "กรุณาเข้าสู่ระบบ"

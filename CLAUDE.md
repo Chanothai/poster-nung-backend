@@ -36,6 +36,24 @@ Dependency ทางเดียว: `api → services → repositories → mode
 
 ---
 
+## New API Checklist (ทุก endpoint ใหม่ — บังคับ ไม่ใช่แค่ happy path)
+ทุก API ที่ implement ต่อจากนี้ ต้องทำ 3 ข้อนี้เสมอ (F1 hardening ทำเป็นต้นแบบไว้แล้ว):
+
+1. **Edge-case errors** — ไล่หมวดให้ครบ ไม่ใช่แค่ทางที่ถูก:
+   - validation boundary (min/max, byte vs char เช่น bcrypt 72 **bytes**, format/regex)
+   - concurrency/race → catch `IntegrityError` แปลงเป็น 409 (ห้ามปล่อยเป็น 500)
+   - not-found (404) · already-exists (409) · auth/ownership (401/403)
+   - rate-limit (429) · timing/enumeration (login user ไม่มี → verify กับ dummy hash ให้ constant-time)
+2. **Auth audit** — ตัดสินทุกเส้น: public หรือ protected
+   - protected → ใช้ `Depends(get_current_user)` (`app/api/deps.py`, bearerAuth) + ownership check (Global Rule 3)
+   - endpoint ที่ดึง/แก้ข้อมูลของ user เฉพาะราย = protected เสมอ
+3. **Tests** — cover edge case ที่คิดในข้อ 1:
+   - business logic → unit test (service) · behavior ระดับ HTTP (auth, envelope, ownership, status) → integration test ผ่าน `client` fixture (`tests/conftest.py`)
+
+Error ใหม่เพิ่มใน `app/core/exceptions.py` (subclass `AppError`) ให้ตรง error_code catalog · แล้วอัปเดต `docs/api-contract-f1-f3.md`
+
+---
+
 ## วิธีสั่งงาน Claude Code ให้ได้ผลดีที่สุด (อ่านก่อนใช้ prompt ด้านล่าง)
 
 **หลักการ 4 ข้อที่ทำให้ prompt มีประสิทธิภาพ:**

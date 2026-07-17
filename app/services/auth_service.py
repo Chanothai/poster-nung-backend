@@ -3,11 +3,13 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import security
 from app.core.config import settings
 from app.core.exceptions import (
+    AccountAlreadyVerified,
     AccountNotVerified,
     EmailAlreadyRegistered,
     InvalidCredentials,
@@ -37,9 +39,14 @@ async def register(session: AsyncSession, data: RegisterRequest) -> tuple[User, 
         raise EmailAlreadyRegistered()
 
     hashed = security.hash_password(data.password)
-    user = await user_repository.create(
-        session, email=data.email, hashed_password=hashed, phone=data.phone
-    )
+    try:
+        user = await user_repository.create(
+            session, email=data.email, hashed_password=hashed, phone=data.phone
+        )
+    except IntegrityError:
+        # แพ้ race: อีก request สมัคร email เดียวกันพร้อมกัน แล้ว commit ก่อน
+        # (pre-check ผ่านทั้งคู่) → unique violation. คืน 409 เดียวกัน ไม่ใช่ 500
+        raise EmailAlreadyRegistered()
 
     plain_otp = security.generate_otp()
     await otp_repository.create_otp(
@@ -69,6 +76,9 @@ async def verify_otp(session: AsyncSession, data: OTPVerifyRequest) -> TokenResp
     if user is None:
         raise UserNotFound()
 
+    if user.is_verified:
+        raise AccountAlreadyVerified()
+
     otp = await otp_repository.get_latest_active(session, user.id)
     if otp is None:
         # ไม่มี OTP ที่ยัง active เลย (ไม่เคยขอ/ใช้ไปแล้วก่อนหน้า) — ปฏิบัติเหมือนกรอกผิด
@@ -95,10 +105,14 @@ async def verify_otp(session: AsyncSession, data: OTPVerifyRequest) -> TokenResp
 
 async def login(session: AsyncSession, data: LoginRequest) -> TokenResponse:
     user = await user_repository.get_by_email(session, data.email)
+    if user is None:
+        # verify กับ dummy hash ให้เสีย bcrypt cost เท่ากับเคส password ผิด
+        # กัน timing attack ที่ใช้เดาว่า email มีในระบบหรือไม่ (user enumeration)
+        security.verify_password(data.password, security.DUMMY_PASSWORD_HASH)
+        raise InvalidCredentials()
+
     # ข้อความเดียวกันทั้ง "ไม่มี email" และ "password ผิด" — กัน user enumeration
-    if user is None or not security.verify_password(
-        data.password, user.hashed_password
-    ):
+    if not security.verify_password(data.password, user.hashed_password):
         raise InvalidCredentials()
 
     if not user.is_verified:

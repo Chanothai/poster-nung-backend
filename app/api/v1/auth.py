@@ -3,9 +3,11 @@
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.limiter import limiter
+from app.models.user import User
 from app.schemas.auth import (
     LoginRequest,
     OTPVerifyRequest,
@@ -13,6 +15,7 @@ from app.schemas.auth import (
     RegisterRequest,
     RegisterResponse,
     TokenResponse,
+    UserResponse,
 )
 from app.services import auth_service
 
@@ -71,3 +74,9 @@ async def refresh(
     result = await auth_service.refresh_token(session, data)
     await session.commit()
     return result
+
+
+@router.get("/me", response_model=UserResponse)
+async def me(current_user: User = Depends(get_current_user)) -> User:
+    """ข้อมูลผู้ใช้จาก access token ปัจจุบัน (protected — ต้องแนบ Bearer token)."""
+    return current_user

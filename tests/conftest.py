@@ -69,10 +69,52 @@ async def db_session() -> AsyncSession:
     engine = create_async_engine(TEST_DATABASE_URL)
     async with engine.connect() as conn:
         await conn.begin()
-        session = AsyncSession(bind=conn, join_transaction_mode="create_savepoint")
+        # expire_on_commit=False ให้ตรงกับ async_session_maker จริง — ไม่งั้นหลัง route
+        # commit() ORM object จะ expired แล้วตอน serialize response จะ trigger async I/O
+        # นอก greenlet → MissingGreenlet
+        session = AsyncSession(
+            bind=conn,
+            join_transaction_mode="create_savepoint",
+            expire_on_commit=False,
+        )
         try:
             yield session
         finally:
             await session.close()
             await conn.rollback()
     await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def client(db_session: AsyncSession):
+    """httpx AsyncClient ยิงเข้า ASGI app ตรง ๆ — override get_db ให้ใช้ test session
+    เดียวกับ db_session (data ที่ route commit เป็น savepoint แล้ว rollback ท้าย test).
+
+    ปิด rate limiter ระหว่าง test เพราะ state ของ slowapi เป็น in-memory ค้างข้าม
+    test (key = client IP เดียวกัน) จะทำให้เกิด 429 สุ่ม — พฤติกรรม 429 ทดสอบแยก/manual แล้ว.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from app.core.config import settings
+    from app.core.database import get_db
+    from app.core.limiter import limiter
+    from app.main import app
+
+    async def _override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = _override_get_db
+    limiter_was_enabled = limiter.enabled
+    limiter.enabled = False
+    # บังคับ DEBUG=true ระหว่าง integration test เพื่อให้ register คืน dev_otp
+    # (test เอา otp ไป verify ต่อ) — ไม่งั้นบน CI ที่ไม่ตั้ง DEBUG จะได้ None แล้ว test พัง
+    debug_was = settings.DEBUG
+    settings.DEBUG = True
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+    settings.DEBUG = debug_was
+    limiter.enabled = limiter_was_enabled
+    app.dependency_overrides.clear()
