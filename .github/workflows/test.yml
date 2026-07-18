@@ -71,7 +71,9 @@ jobs:
           context: .
           push: true
           # tag = commit sha → เป็น artifact เดียวที่ promote ข้ามทุก env (build ครั้งเดียว)
-          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          # toLower() จำเป็น — Docker registry บังคับ repository name เป็นตัวพิมพ์เล็กเท่านั้น
+          # (github.repository = "Owner/repo" มีตัวพิมพ์ใหญ่ตาม GitHub username จริง)
+          tags: ghcr.io/${{ toLower(github.repository) }}:${{ github.sha }}
 
   # ---------- promote sha เดิม: sit → uat → production (ไม่ build ใหม่) ----------
   deploy-sit:
@@ -82,7 +84,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Deploy image sha to SIT
         env:
-          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_REGISTRY: ghcr.io/${{ toLower(github.repository) }}
           IMAGE_TAG: ${{ github.sha }}
           # ตั้งเป็น per-environment variable ใน GitHub (docker context ของ host ปลายทาง)
           DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET }}
@@ -96,7 +98,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Deploy same image sha to UAT
         env:
-          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_REGISTRY: ghcr.io/${{ toLower(github.repository) }}
           IMAGE_TAG: ${{ github.sha }}
           # ตั้งเป็น per-environment variable ใน GitHub (docker context ของ host ปลายทาง)
           DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET }}
@@ -110,7 +112,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Deploy same image sha to PRODUCTION
         env:
-          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_REGISTRY: ghcr.io/${{ toLower(github.repository) }}
           IMAGE_TAG: ${{ github.sha }}
           # ตั้งเป็น per-environment variable ใน GitHub (docker context ของ host ปลายทาง)
           DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET }}
