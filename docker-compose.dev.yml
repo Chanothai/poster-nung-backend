@@ -1,0 +1,32 @@
+# DEV override — hot-reload local development inside Docker
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Mount source code as volumes (overlays the code baked into the image at build
+# time) + uvicorn --reload so the container restarts itself the moment you save
+# a file on the host — no image rebuild needed for code changes.
+#
+# db ใช้ service เดียวกับ base compose (ไม่ override ที่นี่) — container/volume
+# เดียวกับ `docker compose up -d db` (workflow รัน uvicorn บน host โดยตรง) กัน
+# db container ซ้ำซ้อน/แย่ง port 5432 กันเอง
+services:
+  app:
+    container_name: posternung-dev-app
+    volumes:
+      # sync เฉพาะโค้ดที่ Dockerfile COPY เข้า image — ไม่ mount ทั้ง repo
+      # (กัน venv/, .git/ ของ host ทับ site-packages ที่ build ไว้ใน image)
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+    environment:
+      # container เชื่อม db ผ่าน docker network ต้องใช้ hostname "db" ไม่ใช่ localhost
+      # (.env ตั้ง DATABASE_URL ไว้สำหรับรัน uvicorn บน host โดยตรง — คนละ network)
+      # environment: มี precedence เหนือ env_file: ของ base จึง override ได้ตรงนี้
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+# one-off commands ระหว่าง dev (เช่น สร้าง migration ใหม่) รันผ่าน exec ได้ตรงๆ
+# เพราะ volume mount sync กลับมาที่ host:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml exec app \
+#     alembic revision --autogenerate -m "..."
