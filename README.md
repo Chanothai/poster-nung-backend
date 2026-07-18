@@ -128,7 +128,7 @@ The test suite creates its own database and applies migrations independently —
 
 ## Deployment
 
-The app follows 12-factor config: one Docker image is built once per commit and promoted unchanged across `sit → uat → production`, with behavior differing only via environment variables (never `if env == "production"` in code). CI/CD is GitHub Actions; see [`.github/workflows/test.yml`](.github/workflows/test.yml) for the pipeline and [`.claude/rules/environments.md`](.claude/rules/environments.md) for the full deployment guide (Docker Compose per environment, secrets handling, promotion flow).
+The app follows 12-factor config: one Docker image is built once per commit and promoted unchanged across `sit → uat → production`, with behavior differing only via environment variables (never `if env == "production"` in code). CI/CD is GitHub Actions; see [`.github/workflows/test.yml`](.github/workflows/test.yml) for the pipeline and [`.claude/rules/environments.md`](.claude/rules/environments.md) for the full deployment guide (Docker Compose per environment, secrets handling, promotion flow). For a copy-paste command reference (local dev, migrations, build, deploy, cleanup), see [`docs/docker-commands.md`](docs/docker-commands.md).
 
 ## Contributing
 
