@@ -114,3 +114,10 @@ class OAuthLoginConflict(AppError):
     status_code = 409
     error_code = "OAUTH_LOGIN_CONFLICT"
     message = "เกิดข้อขัดแย้งระหว่างเข้าสู่ระบบ กรุณาลองใหม่อีกครั้ง"
+
+
+# ---- F2 Catalog errors ----
+class PosterNotFound(AppError):
+    status_code = 404
+    error_code = "POSTER_NOT_FOUND"
+    message = "ไม่พบโปสเตอร์นี้ในระบบ"
