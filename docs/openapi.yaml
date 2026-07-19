@@ -222,6 +222,72 @@ paths:
                 message: Refresh token ไม่ถูกต้องหรือหมดอายุ กรุณาเข้าสู่ระบบใหม่
                 details: null
 
+  /auth/google:
+    post:
+      tags: [Auth]
+      summary: Mobile login ผ่าน Google (id_token จาก Google Sign-In SDK)
+      description: >
+        client (mobile app) ใช้ Google Sign-In SDK ยืนยันตัวตนกับ Google เอง
+        ก่อน แล้วส่ง id_token ที่ได้มาที่ endpoint นี้ — backend verify token
+        กับ Google, find-or-create user, auto-link เข้าบัญชี email/password
+        เดิมถ้า email ตรงกันและ Google ยืนยันแล้ว, แล้วออก JWT ชุดเดียวกับ
+        login ปกติ — ดู docs/api-contract-f1-f3.md §6 สำหรับรายละเอียด
+        account-linking
+      operationId: googleLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GoogleLoginRequest"
+      responses:
+        "200":
+          description: ยืนยันตัวตนสำเร็จ (user ใหม่หรือเดิมก็ได้ token ชุดเดียวกัน)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: id_token verify กับ Google ไม่ผ่าน (ผิด/หมดอายุ/audience ไม่ตรง)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: OAUTH_TOKEN_INVALID
+                message: ไม่สามารถยืนยันตัวตนกับ Google ได้ กรุณาลองใหม่
+                details: null
+        "403":
+          description: Google บอกว่า email ของบัญชีนี้ยังไม่ยืนยัน
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: OAUTH_EMAIL_NOT_VERIFIED
+                message: บัญชี Google นี้ยังไม่ได้ยืนยันอีเมล
+                details: null
+        "409":
+          description: แพ้ race ระหว่าง link บัญชี — client เรียกซ้ำได้ (id_token ยังใช้ได้)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: OAUTH_LOGIN_CONFLICT
+                message: เกิดข้อขัดแย้งระหว่างเข้าสู่ระบบ กรุณาลองใหม่อีกครั้ง
+                details: null
+        "503":
+          description: ยังไม่ได้ตั้งค่า GOOGLE_CLIENT_ID บน environment นี้
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: OAUTH_PROVIDER_NOT_CONFIGURED
+                message: ระบบยังไม่ได้ตั้งค่า Google login กรุณาติดต่อผู้ดูแลระบบ
+                details: null
+
   /auth/me:
     get:
       tags: [Auth]
@@ -537,6 +603,17 @@ components:
       properties:
         refresh_token:
           type: string
+
+    GoogleLoginRequest:
+      type: object
+      required: [id_token]
+      properties:
+        id_token:
+          type: string
+          description: >
+            ID token (JWT ที่ Google เซ็นให้) จาก Google Sign-In SDK บน mobile
+            app — backend verify กับ Google เอง ไม่ต้องส่ง access_token ของ
+            Google มาด้วย
 
     # ── response schemas ──
     UserResponse:

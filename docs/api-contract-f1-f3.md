@@ -33,6 +33,7 @@
 | POST | `/auth/verify-otp` | `email, code` | `200` TokenResponse *(verify ผ่าน = auto-login)* | `400` OTP_INVALID · `400` OTP_EXPIRED · `409` ACCOUNT_ALREADY_VERIFIED · `429` OTP_LOCKED · `429` OTP_RATE_LIMITED · `404` USER_NOT_FOUND |
 | POST | `/auth/login` | `email, password` | `200` TokenResponse | `401` INVALID_CREDENTIALS · `403` ACCOUNT_NOT_VERIFIED · `429` LOGIN_RATE_LIMITED |
 | POST | `/auth/refresh` | `refresh_token` | `200` TokenResponse | `401` REFRESH_TOKEN_INVALID |
+| POST | `/auth/google` | `id_token` (จาก Google Sign-In SDK บน mobile) | `200` TokenResponse *(find-or-create + auto-login)* | `401` OAUTH_TOKEN_INVALID · `403` OAUTH_EMAIL_NOT_VERIFIED · `409` OAUTH_LOGIN_CONFLICT · `422` VALIDATION_ERROR · `503` OAUTH_PROVIDER_NOT_CONFIGURED |
 
 ### Auth (protected) — `/auth` ต้องแนบ `Authorization: Bearer <access_token>`
 
@@ -72,6 +73,10 @@
 | `ACCOUNT_ALREADY_VERIFIED` | 409 | `POST /auth/verify-otp` | บัญชี verify แล้ว เรียก verify ซ้ำ |
 | `LOGIN_RATE_LIMITED` | 429 | `POST /auth/login` | login ถี่เกินไป |
 | `REFRESH_TOKEN_INVALID` | 401 | `POST /auth/refresh` | token ผิด/หมดอายุ/ถูก revoke |
+| `OAUTH_TOKEN_INVALID` | 401 | `POST /auth/google` | id_token verify กับ Google ไม่ผ่าน (ผิด/หมดอายุ/audience ไม่ตรง) |
+| `OAUTH_EMAIL_NOT_VERIFIED` | 403 | `POST /auth/google` | Google บอกว่า email ยังไม่ verified — ปฏิเสธ ไม่ auto-link |
+| `OAUTH_LOGIN_CONFLICT` | 409 | `POST /auth/google` | แพ้ race ระหว่าง link บัญชี — ให้ client retry (id_token ยังใช้ได้) |
+| `OAUTH_PROVIDER_NOT_CONFIGURED` | 503 | `POST /auth/google` | ยังไม่ได้ตั้ง `GOOGLE_CLIENT_ID` บน environment นี้ |
 | `POSTER_NOT_FOUND` | 404 | `GET /posters/{id}`, `POST /cart/reserve/{id}` | ไม่มีโปสเตอร์นี้ |
 | `UNAUTHORIZED` | 401 | ทุก endpoint ที่ต้อง login | ไม่มี/token ผิด |
 | **`POSTER_NOT_AVAILABLE`** | **409** | `POST /cart/reserve/{id}` | **โปสเตอร์ถูกจอง/ขายไปแล้ว — ผลตรงของ concurrency defense (`FOR UPDATE`)** |
@@ -80,7 +85,7 @@
 | `RESERVATION_NOT_FOUND` | 404 | `DELETE /cart/reservation/{id}` | ไม่มี reservation นี้ |
 | `RESERVATION_NOT_ACTIVE` | 409 | `DELETE /cart/reservation/{id}` | ยกเลิกซ้ำ/หมดอายุ/converted ไปแล้ว |
 
-รวม **18 error_code**
+รวม **22 error_code**
 
 ---
 
@@ -107,16 +112,25 @@
 
 ---
 
-## 6. Schema สรุป (รายละเอียดเต็มใน `openapi.yaml` → `components.schemas`)
+## 6. จุดวิกฤต — `POST /auth/google` account linking
 
-- **Request:** `RegisterRequest`, `LoginRequest`, `OTPVerifyRequest`, `RefreshRequest`
-- **Response:** `UserResponse` (ไม่มี `hashed_password`), `TokenResponse`, `PosterListItem`, `PosterDetailResponse` (extends `PosterListItem` + authenticity/provenance/images), `PaginatedPosterList`, `ReservationResponse`
-- **Error:** `ErrorResponse{error_code, message, details}`, `ValidationErrorDetail{field, message}`
-- **Enum ที่ใช้ตรงกับ `database-design.md`:** `PosterStatus`, `ReservationStatus`, `PosterCondition`
+- **Auto-link ด้วย email** เท่านั้นเมื่อ Google ยืนยันว่า `email_verified=true` ใน id_token — ไม่เชื่อ email ที่ยัง unverified (คืน `403 OAUTH_EMAIL_NOT_VERIFIED`) กันเอา email มั่วมาผูกกับบัญชีคนอื่น
+- **`oauth_identities` แยกตาราง** จาก `users` — `provider_user_id` (Google `sub` claim) เป็น key ที่เสถียร ไม่ใช้ email เป็น key เพราะเปลี่ยนได้ ผูก user เดิม (ที่สมัคร email/password ไว้แล้ว) เข้ากับ Google identity ได้โดยไม่ทับ/ลบรหัสผ่านเดิม — และถ้ายังไม่ verify มาก่อน จะ auto-verify ให้ทันที (Google ยืนยัน email แทนแล้ว)
+- **Race condition** (สอง request login Google account เดียวกันครั้งแรกพร้อมกัน) ป้องกันด้วย `session.begin_nested()` (savepoint) + `IntegrityError` handling — ถ้าแพ้ race จะ retry อ่าน identity ที่อีกฝั่งสร้างไว้ก่อน ถ้ายังหาไม่เจอ (กรณีที่แปลกมาก) คืน `409 OAUTH_LOGIN_CONFLICT` ให้ client เรียกซ้ำ (id_token ยังใช้ได้ไม่กี่นาที)
+- **`users.hashed_password` เป็น nullable** — user ที่สมัครผ่าน Google อย่างเดียวไม่มีรหัสผ่าน; `POST /auth/login` ด้วย email นี้จะได้ `401 INVALID_CREDENTIALS` เหมือน password ผิดทุกประการ (constant-time dummy-verify กันบอกว่า account ใช้ auth method ไหน)
 
 ---
 
-## 7. Verification checklist
+## 7. Schema สรุป (รายละเอียดเต็มใน `openapi.yaml` → `components.schemas`)
+
+- **Request:** `RegisterRequest`, `LoginRequest`, `OTPVerifyRequest`, `RefreshRequest`, `GoogleLoginRequest`
+- **Response:** `UserResponse` (ไม่มี `hashed_password`), `TokenResponse`, `PosterListItem`, `PosterDetailResponse` (extends `PosterListItem` + authenticity/provenance/images), `PaginatedPosterList`, `ReservationResponse`
+- **Error:** `ErrorResponse{error_code, message, details}`, `ValidationErrorDetail{field, message}`
+- **Enum ที่ใช้ตรงกับ `database-design.md`:** `PosterStatus`, `ReservationStatus`, `PosterCondition`, `OAuthProvider`
+
+---
+
+## 8. Verification checklist
 
 - [ ] Lint `docs/openapi.yaml` ผ่าน (`npx @redocly/cli lint docs/openapi.yaml` หรือ validator อื่น)
 - [ ] เปิด spec ใน Swagger Editor / VS Code OpenAPI preview — ทุก path มี response ตรงตามตารางข้อ 2

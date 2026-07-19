@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # ---- Reservation (F3 — ยังไม่มี consumer, เตรียม config ไว้) ----
     RESERVE_TTL_MINUTES: int = 15
 
+    # ---- OAuth / Social login ----
+    # ว่างได้ (ยังไม่ตั้งค่า) — endpoint จะ fail ด้วย error ชัดเจนแทนที่จะข้าม
+    # audience check เงียบๆ ถ้าไม่ได้ตั้ง (ดู auth_service.google_login)
+    GOOGLE_CLIENT_ID: str = ""
+
     # ---- CORS ----
     # NoDecode = ข้าม JSON-decode ของ pydantic-settings ให้ raw string ถึง validator
     # (env var เป็น comma-separated ไม่ใช่ JSON)

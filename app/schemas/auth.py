@@ -43,6 +43,11 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class GoogleLoginRequest(BaseModel):
+    # ID token จาก Google Sign-In SDK บน mobile app (JWT ที่ Google เซ็นให้)
+    id_token: str = Field(min_length=1)
+
+
 # ---- Responses ----
 class TokenResponse(BaseModel):
     access_token: str

@@ -17,9 +17,10 @@ async def create(
     session: AsyncSession,
     *,
     email: str,
-    hashed_password: str,
+    hashed_password: str | None = None,
     phone: str | None = None,
 ) -> User:
+    # hashed_password=None → user สมัครผ่าน social login อย่างเดียว (ยังไม่มีรหัสผ่าน)
     user = User(email=email, hashed_password=hashed_password, phone=phone)
     session.add(user)
     await session.flush()  # ให้ได้ id/created_at กลับมาโดยไม่ commit
