@@ -32,3 +32,7 @@ class PosterCondition(str, enum.Enum):
     good = "good"
     fair = "fair"
     poor = "poor"
+
+
+class OAuthProvider(str, enum.Enum):
+    google = "google"

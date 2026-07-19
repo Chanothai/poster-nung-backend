@@ -1,4 +1,4 @@
-"""F1 Authentication models — users, otp_codes, refresh_tokens."""
+"""F1 Authentication models — users, otp_codes, refresh_tokens, oauth_identities."""
 
 import uuid
 from datetime import datetime
@@ -10,6 +10,7 @@ from sqlalchemy import (
     Index,
     SmallInteger,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
@@ -17,10 +18,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 from app.models.base import CreatedAtMixin, TimestampMixin, uuid_pk
-from app.models.enums import OtpPurpose
+from app.models.enums import OAuthProvider, OtpPurpose
 
 # create_type=False → เราจัดการ CREATE/DROP TYPE เองใน migration (ดู plan §D)
 otp_purpose_enum = PgEnum(OtpPurpose, name="otp_purpose", create_type=False)
+oauth_provider_enum = PgEnum(OAuthProvider, name="oauth_provider", create_type=False)
 
 
 class User(Base, TimestampMixin):
@@ -29,7 +31,8 @@ class User(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = uuid_pk()
     email: Mapped[str] = mapped_column(CITEXT, unique=True, nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    # nullable — user ที่สมัครผ่าน social login อย่างเดียว (เช่น Google) ไม่มีรหัสผ่าน
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_verified: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )
@@ -73,3 +76,28 @@ class RefreshToken(Base, CreatedAtMixin):
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class OAuthIdentity(Base, CreatedAtMixin):
+    """เชื่อม user กับบัญชี social provider (เช่น Google) — แยกตารางเผื่อรองรับ
+    provider อื่นในอนาคต (Apple/Facebook) และ user คนเดียว link ได้หลาย provider
+    โดยไม่ต้อง migrate schema ของ users ซ้ำ."""
+
+    __tablename__ = "oauth_identities"
+    __table_args__ = (
+        # provider + provider_user_id คู่เดียวกันต้อง map ไป user เดียวเท่านั้น
+        UniqueConstraint(
+            "provider", "provider_user_id", name="uq_oauth_identities_provider_user"
+        ),
+        Index("ix_oauth_identities_user", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[OAuthProvider] = mapped_column(oauth_provider_enum, nullable=False)
+    # "sub" claim ของ Google — ตัวระบุบัญชีที่เสถียร (ไม่ใช้ email เป็น key เพราะเปลี่ยนได้)
+    provider_user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # email ตอน link ไว้เพื่อ audit/debug เท่านั้น ไม่ใช่ source of truth (ดูที่ users.email)
+    email: Mapped[str] = mapped_column(CITEXT, nullable=False)
