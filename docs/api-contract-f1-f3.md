@@ -120,6 +120,7 @@
 - **Race condition** (สอง request login account เดียวกันครั้งแรกพร้อมกัน) ป้องกันด้วย `session.begin_nested()` (savepoint) + `IntegrityError` handling — ถ้าแพ้ race จะ retry อ่าน identity ที่อีกฝั่งสร้างไว้ก่อน ถ้ายังหาไม่เจอ (กรณีที่แปลกมาก) คืน `409 OAUTH_LOGIN_CONFLICT` ให้ client เรียกซ้ำ (id_token ยังใช้ได้ไม่กี่นาที)
 - **`users.hashed_password` เป็น nullable** — user ที่สมัครผ่าน social อย่างเดียวไม่มีรหัสผ่าน; `POST /auth/login` ด้วย email นี้จะได้ `401 INVALID_CREDENTIALS` เหมือน password ผิดทุกประการ (constant-time dummy-verify กันบอกว่า account ใช้ auth method ไหน)
 - **`provider` ยังเป็น `google`** (sign-in method ที่ mobile ใช้ตอนนี้) — ถ้าเพิ่ม Firebase sign-in provider อื่น (Apple ฯลฯ) ภายหลัง ค่อยทบทวน key/provider · **หมายเหตุ:** ทุก env ใช้ Firebase project เดียว → token จาก app คนละ env verify ผ่าน backend ทุก env (แยก env จาก token ไม่ได้ ถ้าต้องการแยกต้องแยก Firebase project)
+- **Platform-agnostic (ยืนยันแล้วด้วยไฟล์ config จริงทั้ง iOS + Android)** — `verify_firebase_token` เช็คแค่ `aud`/`iss` ระดับ **project** เท่านั้น ไม่แตะ platform-specific field ใดๆ (OAuth client_id, api_key, package/bundle id) ที่อยู่ใน `GoogleService-Info.plist`/`google-services.json` — field พวกนั้นฝั่ง mobile SDK ใช้คุยกับ Google/Firebase เองก่อนได้ token มา backend ไม่เกี่ยว ตรวจแล้ว Android `google-services.json` ทั้ง 3 env มี `project_id: "posternung"` ตรงกับ iOS เป๊ะ (project เดียวกัน) → **endpoint เดิมรองรับ Android ได้ทันทีโดยไม่ต้องแก้โค้ดฝั่ง backend เลย**
 
 ---
 
