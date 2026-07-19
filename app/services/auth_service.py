@@ -1,8 +1,12 @@
-"""Business logic ของ F1 Authentication — register / verify-otp / login / refresh."""
+"""Business logic ของ F1 Authentication — register / verify-otp / login / refresh /
+google_login (social)."""
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,15 +17,26 @@ from app.core.exceptions import (
     AccountNotVerified,
     EmailAlreadyRegistered,
     InvalidCredentials,
+    OAuthEmailNotVerified,
+    OAuthLoginConflict,
+    OAuthProviderNotConfigured,
+    OAuthTokenInvalid,
     OtpExpired,
     OtpInvalid,
     OtpLocked,
     RefreshTokenInvalid,
     UserNotFound,
 )
+from app.models.enums import OAuthProvider
 from app.models.user import User
-from app.repositories import otp_repository, refresh_token_repository, user_repository
+from app.repositories import (
+    oauth_identity_repository,
+    otp_repository,
+    refresh_token_repository,
+    user_repository,
+)
 from app.schemas.auth import (
+    GoogleLoginRequest,
     LoginRequest,
     OTPVerifyRequest,
     RefreshRequest,
@@ -105,9 +120,10 @@ async def verify_otp(session: AsyncSession, data: OTPVerifyRequest) -> TokenResp
 
 async def login(session: AsyncSession, data: LoginRequest) -> TokenResponse:
     user = await user_repository.get_by_email(session, data.email)
-    if user is None:
-        # verify กับ dummy hash ให้เสีย bcrypt cost เท่ากับเคส password ผิด
-        # กัน timing attack ที่ใช้เดาว่า email มีในระบบหรือไม่ (user enumeration)
+    if user is None or user.hashed_password is None:
+        # user ไม่มี หรือสมัครผ่าน social login อย่างเดียว (ไม่มีรหัสผ่านตั้งไว้) —
+        # verify กับ dummy hash เสมอให้เสีย bcrypt cost เท่ากัน กัน timing attack
+        # ที่ใช้เดาว่า email มีในระบบไหม/ใช้ auth method ไหน (user enumeration)
         security.verify_password(data.password, security.DUMMY_PASSWORD_HASH)
         raise InvalidCredentials()
 
@@ -145,4 +161,83 @@ async def refresh_token(session: AsyncSession, data: RefreshRequest) -> TokenRes
 
     # rotate: revoke token เก่า ออกชุดใหม่
     await refresh_token_repository.revoke(session, token_hash)
+    return await _issue_and_store_tokens(session, user)
+
+
+async def google_login(
+    session: AsyncSession, data: GoogleLoginRequest
+) -> TokenResponse:
+    """Mobile login ผ่าน Google — client sign-in ด้วย Google ผ่าน Firebase Auth แล้ว
+    ส่ง Firebase ID token มา backend verify แล้ว find-or-create user + ออก JWT ชุด
+    เดียวกับ login ปกติ."""
+    if not settings.FIREBASE_PROJECT_ID:
+        raise OAuthProviderNotConfigured()
+
+    try:
+        # verify_firebase_token เป็น blocking call (fetch Google public certs ผ่าน HTTP)
+        # ต้องรันใน thread แยกกัน block event loop หลักของ FastAPI
+        # audience = Firebase project id → เช็ค aud + iss (securetoken.google.com/<project>)
+        payload = await asyncio.to_thread(
+            google_id_token.verify_firebase_token,
+            data.id_token,
+            google_requests.Request(),
+            settings.FIREBASE_PROJECT_ID,
+        )
+    except ValueError:
+        # ครอบคลุมทั้ง signature ผิด, หมดอายุ, audience/issuer ไม่ตรง — google-auth
+        # library ใช้ ValueError เดียวสำหรับ token ที่ verify ไม่ผ่านทุกกรณี
+        raise OAuthTokenInvalid()
+
+    if not payload.get("email_verified", False):
+        # ไม่เชื่อ email ที่ยังไม่ยืนยัน — กันเอา email มั่วมาผูกกับบัญชีคนอื่น
+        raise OAuthEmailNotVerified()
+
+    # sub ของ Firebase token = Firebase uid (stable ต่อ user ใน project) — ใช้เป็น key
+    # เก็บใน provider_user_id. provider คงเป็น google (sign-in method ตอนนี้มีแค่ Google) —
+    # ถ้าเพิ่ม Firebase sign-in provider อื่นภายหลัง ค่อยทบทวน key/provider
+    provider_user_id: str = payload["sub"]
+    email: str = payload["email"]
+
+    identity = await oauth_identity_repository.get_by_provider_user_id(
+        session, provider=OAuthProvider.google, provider_user_id=provider_user_id
+    )
+    if identity is not None:
+        user = await session.get(User, identity.user_id)
+        if user is None:
+            # ไม่ควรเกิด (FK CASCADE ลบคู่กันเสมอ) — กันไว้เผื่อ data ผิดปกติ
+            raise OAuthLoginConflict()
+        return await _issue_and_store_tokens(session, user)
+
+    # ยังไม่เคย link Google account นี้มาก่อน — หา user เดิมจาก email (auto-link ถ้า
+    # Google ยืนยัน email แล้ว) หรือสร้างใหม่ (social-only, ไม่มีรหัสผ่าน)
+    try:
+        async with session.begin_nested():  # savepoint กันแพ้ race ทำ transaction หลักพัง
+            user = await user_repository.get_by_email(session, email)
+            if user is None:
+                user = await user_repository.create(
+                    session, email=email, hashed_password=None
+                )
+            if not user.is_verified:
+                await user_repository.set_verified(session, user.id)
+                user.is_verified = True
+
+            await oauth_identity_repository.create(
+                session,
+                user_id=user.id,
+                provider=OAuthProvider.google,
+                provider_user_id=provider_user_id,
+                email=email,
+            )
+    except IntegrityError:
+        # แพ้ race: อีก request login Google account เดียวกันพร้อมกัน สร้าง
+        # user/identity ไปก่อน — savepoint rollback แล้ว ลองอ่านซ้ำครั้งเดียว
+        identity = await oauth_identity_repository.get_by_provider_user_id(
+            session, provider=OAuthProvider.google, provider_user_id=provider_user_id
+        )
+        if identity is None:
+            raise OAuthLoginConflict()
+        user = await session.get(User, identity.user_id)
+        if user is None:
+            raise OAuthLoginConflict()
+
     return await _issue_and_store_tokens(session, user)
