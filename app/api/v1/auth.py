@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.core.limiter import limiter
 from app.models.user import User
 from app.schemas.auth import (
+    GoogleLoginRequest,
     LoginRequest,
     OTPVerifyRequest,
     RefreshRequest,
@@ -72,6 +73,20 @@ async def refresh(
     data: RefreshRequest, session: AsyncSession = Depends(get_db)
 ) -> TokenResponse:
     result = await auth_service.refresh_token(session, data)
+    await session.commit()
+    return result
+
+
+@router.post("/google", response_model=TokenResponse)
+@limiter.limit("5/minute")
+async def google_login(
+    request: Request,
+    response: Response,  # ให้ slowapi inject rate-limit headers เข้า response นี้ (ไม่ใช้ตรงๆ)
+    data: GoogleLoginRequest,
+    session: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    """Mobile login ผ่าน Google — client แนบ id_token จาก Google Sign-In SDK มา."""
+    result = await auth_service.google_login(session, data)
     await session.commit()
     return result
 

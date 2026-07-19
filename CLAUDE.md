@@ -175,16 +175,26 @@ Acceptance: test ว่า user A เปิด order ของ user B ได้ 
 - [ ] (F5) ทุก endpoint ที่ดึงข้อมูล user เช็ค ownership แล้ว
 - [ ] commit: `feat(<scope>): <subject>` (scope = ชื่อ feature เช่น auth, reservation) — บน feature branch ตาม Git Workflow ด้านล่าง
 
-## Git Workflow (บังคับ — repo protect `master` ระดับ GitHub server-side)
-`master` protect ด้วย GitHub ruleset จริง (ไม่ใช่แค่ข้อตกลง) — push ตรงเข้า `master`
-ถูก GitHub ปฏิเสธเสมอ ไม่มีข้อยกเว้นแม้ admin (`current_user_can_bypass: never`)
-- ทุก feature/API service ใหม่ → แยก branch เสมอ ตั้งชื่อ `feature/<scope>` (เช่น
-  `feature/f2-poster-catalog`) หรือ `fix/<scope>` สำหรับ bug fix
-- เปิด PR เข้า `master` แล้ว**หยุดรอผู้ใช้ review + merge เอง** — ห้าม auto-merge
-  แม้ CI (`test` job) จะผ่านแล้วก็ตาม
-- `master` require: PR (ไม่บังคับ approval count — solo dev), status check `test`
+## Git Workflow (บังคับ — repo protect `master` และ `develop` ระดับ GitHub server-side)
+`master` และ `develop` protect ด้วย GitHub ruleset จริงทั้งคู่ (ไม่ใช่แค่ข้อตกลง) — push
+ตรงเข้าทั้งสอง branch ถูก GitHub ปฏิเสธเสมอ ไม่มีข้อยกเว้นแม้ admin
+(`current_user_can_bypass: never`)
+
+- **`develop` = integration branch — PR ทุกอันเข้าที่นี่ ไม่ใช่ `master`**
+  ทุก feature/API service ใหม่ → แยก branch จาก `develop` เสมอ ตั้งชื่อ `feature/<scope>`
+  (เช่น `feature/f2-poster-catalog`) หรือ `fix/<scope>` สำหรับ bug fix →
+  `gh pr create --base develop`
+- เปิด PR แล้ว**หยุดรอผู้ใช้ review + merge เอง** — ห้าม auto-merge แม้ CI (`test` job)
+  จะผ่านแล้วก็ตาม
+- **`master` = deploy trigger เท่านั้น** — `develop` ไม่ผูกกับ build/deploy job ใดๆ
+  (`push: branches: [master]` ใน `test.yml` ยังชี้ที่ `master` อย่างเดียว) การเอา
+  `develop` → `master` (พร้อม deploy) เป็นการตัดสินใจแยกต่างหากที่ผู้ใช้ทำเอง (PR
+  `develop` → `master` เมื่อพร้อม release)
+- ทั้งสอง branch require: PR (ไม่บังคับ approval count — solo dev), status check `test`
   ผ่าน, ห้าม force-push, ห้ามลบ branch (ดู `.claude/rules/environments.md` ไม่เกี่ยว
   — rule นี้เป็น GitHub repo setting ไม่ใช่ path-scoped file)
+- GitHub default branch ยังเป็น `master` (ไม่เปลี่ยน) — ต้องระบุ `--base develop`
+  ทุกครั้งตอนเปิด PR ฟีเจอร์ใหม่
 
 ## ห้ามทำโดยไม่ถาม
 - ห้าม auto-generate secret/JWT key ใส่ค่า default ที่ดูใช้งานได้จริง (ต้องเป็น placeholder)

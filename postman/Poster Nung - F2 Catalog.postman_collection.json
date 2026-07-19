@@ -1,0 +1,375 @@
+{
+  "info": {
+    "_postman_id": "5e568db4-46f6-4775-9845-faa83225cf1d",
+    "name": "Poster Nung - F2 Catalog",
+    "description": "Collection ทดสอบ F2 Poster Catalog API ของ Poster Nung Backend\n\nอ้างอิงจาก docs/openapi.yaml และ docs/api-contract-f1-f3.md (source of truth)\n\n**ก่อนใช้:**\n1. Import environment 'Poster Nung - Local.postman_environment.json' คู่กัน แล้วเลือกเป็น active environment\n2. เช็คว่า backend รันอยู่ที่ port ตรงกับ base_url ในไฟล์ environment (default: http://127.0.0.1:8000)\n3. ทั้ง 2 endpoint เป็น public ไม่ต้อง auth — ไม่ต้องมี access_token\n4. ยังไม่มี create-poster endpoint (รอ F4/admin tooling) — ต้อง seed ข้อมูล poster ใน DB local เองก่อน (insert ตรงผ่าน ORM/SQL) ไม่งั้น list จะว่างเปล่าและ 'Get Poster Detail' (happy path) จะไม่มี poster_id ให้ใช้\n\n**โครงสร้าง:**\n- 01 - Happy Path: List (ไม่มี filter → มี filter → pagination) แล้วเก็บ poster_id ตัวแรกไปใช้ยิง Detail\n- 02 - Negative Cases: validation boundary (limit/price) + not-found + invalid UUID ตาม error catalog",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 - Happy Path",
+      "description": "Public read-only endpoints — ไม่ต้อง auth\nRequest 1 เก็บ poster_id ตัวแรกที่เจอไว้ใน environment ให้ request 4 (Detail) ใช้ต่อ",
+      "item": [
+        {
+          "name": "1. List Posters (no filter)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "",
+                  "pm.test('response มี items/total/limit/offset', () => {",
+                  "    pm.expect(json).to.have.all.keys('items', 'total', 'limit', 'offset');",
+                  "    pm.expect(json.items).to.be.an('array');",
+                  "});",
+                  "",
+                  "if (json.items.length > 0) {",
+                  "    pm.environment.set('poster_id', json.items[0].id);",
+                  "} else {",
+                  "    console.warn('ไม่มี poster ใน DB local เลย — seed ข้อมูลก่อน ไม่งั้น request 4 (Detail) จะไม่มี poster_id ให้ใช้');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/posters",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "posters"
+              ]
+            },
+            "description": "List poster ทั้งหมด ไม่มี filter — pagination default (limit=20, offset=0)\nเก็บ poster_id ของ item แรก (ถ้ามี) ไว้ใน environment ให้ request 'Get Poster Detail' ใช้ต่อ"
+          },
+          "response": []
+        },
+        {
+          "name": "2. List Posters (with filters)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "",
+                  "pm.test('ทุก item ตรงเงื่อนไข filter (era_decade / price range / available)', () => {",
+                  "    json.items.forEach((item) => {",
+                  "        pm.expect(item.era_decade).to.eql(1980);",
+                  "        pm.expect(parseFloat(item.price)).to.be.at.least(100).and.at.most(5000);",
+                  "        pm.expect(item.status).to.eql('available');",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/posters?era_decade=1980&min_price=100&max_price=5000&in_stock_only=true",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "posters"
+              ],
+              "query": [
+                {
+                  "key": "era_decade",
+                  "value": "1980"
+                },
+                {
+                  "key": "min_price",
+                  "value": "100"
+                },
+                {
+                  "key": "max_price",
+                  "value": "5000"
+                },
+                {
+                  "key": "in_stock_only",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "List พร้อม filter ครบทุกตัว — era_decade, min/max price, in_stock_only (status=available เท่านั้น)"
+          },
+          "response": []
+        },
+        {
+          "name": "3. List Posters (pagination)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "",
+                  "pm.test('limit/offset ตรงกับที่ส่งไป และ items ไม่เกิน limit', () => {",
+                  "    pm.expect(json.limit).to.eql(2);",
+                  "    pm.expect(json.offset).to.eql(0);",
+                  "    pm.expect(json.items.length).to.be.at.most(2);",
+                  "});",
+                  "pm.test('total ไม่ผูกกับ limit (นับทั้งหมดที่ตรง filter)', () => {",
+                  "    pm.expect(json.total).to.be.at.least(json.items.length);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/posters?limit=2&offset=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "posters"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "2"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "ทดสอบ pagination — limit=2 offset=0 (total ต้องนับจาก DB ทั้งหมดที่ตรง filter ไม่ใช่แค่หน้านี้)"
+          },
+          "response": []
+        },
+        {
+          "name": "4. Get Poster Detail",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "",
+                  "pm.test('detail มี field ครบ (authenticity/provenance/images)', () => {",
+                  "    pm.expect(json).to.have.property('id');",
+                  "    pm.expect(json).to.have.property('is_authenticated');",
+                  "    pm.expect(json).to.have.property('provenance');",
+                  "    pm.expect(json.images).to.be.an('array');",
+                  "});",
+                  "pm.test('id ตรงกับที่ขอ', () => pm.expect(json.id).to.eql(pm.environment.get('poster_id')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/posters/{{poster_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "posters",
+                "{{poster_id}}"
+              ]
+            },
+            "description": "ดึงรายละเอียด poster ตัวเดียว — ใช้ poster_id ที่เก็บไว้จาก request 1 (List Posters)\nต้องรันหลัง request 1 เสมอ ไม่งั้น poster_id ว่างเปล่า → 422"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 - Negative Cases",
+      "description": "Validation boundary + not-found ตาม error catalog (docs/api-contract-f1-f3.md §3) — รันแยกอิสระ ไม่ต้องรันตามลำดับ",
+      "item": [
+        {
+          "name": "Get Poster Detail - ไม่พบ (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', () => pm.response.to.have.status(404));",
+                  "const json = pm.response.json();",
+                  "pm.test('error_code เป็น POSTER_NOT_FOUND', () => pm.expect(json.error_code).to.eql('POSTER_NOT_FOUND'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/posters/{{$guid}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "posters",
+                "{{$guid}}"
+              ]
+            },
+            "description": "UUID format ถูกแต่ไม่มี poster นี้จริงในระบบ ({{$guid}} คือ Postman dynamic variable สุ่ม UUID ใหม่ทุกครั้ง) → 404 POSTER_NOT_FOUND"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Poster Detail - UUID format ผิด (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', () => pm.response.to.have.status(422));",
+                  "pm.test('error_code เป็น VALIDATION_ERROR', () => pm.expect(pm.response.json().error_code).to.eql('VALIDATION_ERROR'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/posters/not-a-uuid",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "posters",
+                "not-a-uuid"
+              ]
+            },
+            "description": "path param ไม่ใช่ UUID ที่ valid → FastAPI คืน 422 อัตโนมัติก่อนถึง service"
+          },
+          "response": []
+        },
+        {
+          "name": "List Posters - limit ต่ำกว่า min (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/posters?limit=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "posters"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "limit ต้อง >= 1 — ทดสอบ boundary ต่ำสุด"
+          },
+          "response": []
+        },
+        {
+          "name": "List Posters - limit เกิน max (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/posters?limit=101",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "posters"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "101"
+                }
+              ]
+            },
+            "description": "limit ต้อง <= 100 — ทดสอบ boundary สูงสุด"
+          },
+          "response": []
+        },
+        {
+          "name": "List Posters - min_price ติดลบ (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/posters?min_price=-1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "posters"
+              ],
+              "query": [
+                {
+                  "key": "min_price",
+                  "value": "-1"
+                }
+              ]
+            },
+            "description": "price filter ต้อง >= 0"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

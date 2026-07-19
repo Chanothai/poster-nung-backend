@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     # ---- Reservation (F3 — ยังไม่มี consumer, เตรียม config ไว้) ----
     RESERVE_TTL_MINUTES: int = 15
 
+    # ---- Firebase / Social login ----
+    # Firebase project id ที่ mobile ใช้ (project เดียวทุก env) — เป็น audience ของ
+    # Firebase ID token ที่ verify. ไม่ใช่ secret (public) แต่ต้องตั้งให้ตรง; ว่าง →
+    # endpoint คืน 503 ชัดเจนแทนที่จะข้าม audience check เงียบๆ (ดู auth_service.google_login)
+    FIREBASE_PROJECT_ID: str = ""
+
     # ---- CORS ----
     # NoDecode = ข้าม JSON-decode ของ pydantic-settings ให้ raw string ถึง validator
     # (env var เป็น comma-separated ไม่ใช่ JSON)

@@ -16,7 +16,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models.base import CreatedAtMixin, TimestampMixin, uuid_pk
@@ -62,6 +62,10 @@ class Poster(Base, TimestampMixin):
     authenticity_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     provenance: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    images: Mapped[list["PosterImage"]] = relationship(
+        back_populates="poster", order_by="PosterImage.sort_order"
+    )
+
 
 class PosterImage(Base, CreatedAtMixin):
     __tablename__ = "poster_images"
@@ -87,3 +91,5 @@ class PosterImage(Base, CreatedAtMixin):
     sort_order: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, server_default="0"
     )
+
+    poster: Mapped["Poster"] = relationship(back_populates="images")
