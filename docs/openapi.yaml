@@ -225,13 +225,13 @@ paths:
   /auth/google:
     post:
       tags: [Auth]
-      summary: Mobile login ผ่าน Google (id_token จาก Google Sign-In SDK)
+      summary: Mobile login ผ่าน Google (Firebase ID token)
       description: >
-        client (mobile app) ใช้ Google Sign-In SDK ยืนยันตัวตนกับ Google เอง
-        ก่อน แล้วส่ง id_token ที่ได้มาที่ endpoint นี้ — backend verify token
-        กับ Google, find-or-create user, auto-link เข้าบัญชี email/password
-        เดิมถ้า email ตรงกันและ Google ยืนยันแล้ว, แล้วออก JWT ชุดเดียวกับ
-        login ปกติ — ดู docs/api-contract-f1-f3.md §6 สำหรับรายละเอียด
+        client (mobile app) sign-in ด้วย Google ผ่าน Firebase Auth ก่อน แล้ว
+        ส่ง Firebase ID token ที่ได้มาที่ endpoint นี้ — backend verify token
+        กับ Firebase project (audience), find-or-create user, auto-link เข้าบัญชี
+        email/password เดิมถ้า email ตรงกันและยืนยันแล้ว, แล้วออก JWT ชุดเดียว
+        กับ login ปกติ — ดู docs/api-contract-f1-f3.md §6 สำหรับรายละเอียด
         account-linking
       operationId: googleLogin
       requestBody:
@@ -278,7 +278,7 @@ paths:
                 message: เกิดข้อขัดแย้งระหว่างเข้าสู่ระบบ กรุณาลองใหม่อีกครั้ง
                 details: null
         "503":
-          description: ยังไม่ได้ตั้งค่า GOOGLE_CLIENT_ID บน environment นี้
+          description: ยังไม่ได้ตั้งค่า FIREBASE_PROJECT_ID บน environment นี้
           content:
             application/json:
               schema:
@@ -611,9 +611,9 @@ components:
         id_token:
           type: string
           description: >
-            ID token (JWT ที่ Google เซ็นให้) จาก Google Sign-In SDK บน mobile
-            app — backend verify กับ Google เอง ไม่ต้องส่ง access_token ของ
-            Google มาด้วย
+            Firebase ID token (JWT ที่ Firebase เซ็นให้) จาก Firebase Auth
+            (Google sign-in) บน mobile app — backend verify กับ Firebase project
+            (audience) เอง ไม่ต้องส่ง Google access_token มาด้วย
 
     # ── response schemas ──
     UserResponse:

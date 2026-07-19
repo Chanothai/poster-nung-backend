@@ -11,30 +11,35 @@ from app.core.config import settings
 API = "/api/v1/auth"
 
 
-def _google_payload(
-    *, sub: str = "google-sub-http", email: str = "ghttp@test.example", verified=True
+def _firebase_payload(
+    *, sub: str = "firebase-uid-http", email: str = "ghttp@test.example", verified=True
 ) -> dict:
+    """claim แบบ Firebase ID token (sub = Firebase uid)."""
     return {
-        "iss": "https://accounts.google.com",
-        "aud": "dummy-client-id",
+        "iss": "https://securetoken.google.com/posternung",
+        "aud": "posternung",
         "sub": sub,
         "email": email,
         "email_verified": verified,
+        "firebase": {
+            "identities": {"google.com": ["google-sub-x"], "email": [email]},
+            "sign_in_provider": "google.com",
+        },
     }
 
 
 @pytest.fixture(autouse=True)
-def _google_client_id_configured():
-    original = settings.GOOGLE_CLIENT_ID
-    settings.GOOGLE_CLIENT_ID = "dummy-client-id"
+def _firebase_project_configured():
+    original = settings.FIREBASE_PROJECT_ID
+    settings.FIREBASE_PROJECT_ID = "posternung"
     yield
-    settings.GOOGLE_CLIENT_ID = original
+    settings.FIREBASE_PROJECT_ID = original
 
 
 async def test_google_login_returns_token_and_me_works(client: AsyncClient) -> None:
-    payload = _google_payload(email="google-flow@test.example")
+    payload = _firebase_payload(email="google-flow@test.example")
     with patch(
-        "app.services.auth_service.google_id_token.verify_oauth2_token",
+        "app.services.auth_service.google_id_token.verify_firebase_token",
         return_value=payload,
     ):
         res = await client.post(f"{API}/google", json={"id_token": "fake-token"})
@@ -55,9 +60,9 @@ async def test_google_login_returns_token_and_me_works(client: AsyncClient) -> N
 
 
 async def test_google_login_email_not_verified_403(client: AsyncClient) -> None:
-    payload = _google_payload(email="unverified-http@test.example", verified=False)
+    payload = _firebase_payload(email="unverified-http@test.example", verified=False)
     with patch(
-        "app.services.auth_service.google_id_token.verify_oauth2_token",
+        "app.services.auth_service.google_id_token.verify_firebase_token",
         return_value=payload,
     ):
         res = await client.post(f"{API}/google", json={"id_token": "fake-token"})
@@ -68,7 +73,7 @@ async def test_google_login_email_not_verified_403(client: AsyncClient) -> None:
 
 async def test_google_login_invalid_token_401(client: AsyncClient) -> None:
     with patch(
-        "app.services.auth_service.google_id_token.verify_oauth2_token",
+        "app.services.auth_service.google_id_token.verify_firebase_token",
         side_effect=ValueError("bad token"),
     ):
         res = await client.post(f"{API}/google", json={"id_token": "garbage"})
@@ -84,7 +89,7 @@ async def test_google_login_missing_id_token_is_422(client: AsyncClient) -> None
 
 
 async def test_google_login_provider_not_configured_503(client: AsyncClient) -> None:
-    settings.GOOGLE_CLIENT_ID = ""  # จำลอง env ไม่ได้ตั้งค่า (override fixture)
+    settings.FIREBASE_PROJECT_ID = ""  # จำลอง env ไม่ได้ตั้งค่า (override fixture)
     res = await client.post(f"{API}/google", json={"id_token": "fake-token"})
     assert res.status_code == 503
     assert res.json()["error_code"] == "OAUTH_PROVIDER_NOT_CONFIGURED"

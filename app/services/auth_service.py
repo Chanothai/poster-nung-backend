@@ -167,19 +167,21 @@ async def refresh_token(session: AsyncSession, data: RefreshRequest) -> TokenRes
 async def google_login(
     session: AsyncSession, data: GoogleLoginRequest
 ) -> TokenResponse:
-    """Mobile login ผ่าน Google — client ส่ง id_token จาก Google Sign-In SDK มา
-    verify ที่ backend แล้ว find-or-create user + ออก JWT ชุดเดียวกับ login ปกติ."""
-    if not settings.GOOGLE_CLIENT_ID:
+    """Mobile login ผ่าน Google — client sign-in ด้วย Google ผ่าน Firebase Auth แล้ว
+    ส่ง Firebase ID token มา backend verify แล้ว find-or-create user + ออก JWT ชุด
+    เดียวกับ login ปกติ."""
+    if not settings.FIREBASE_PROJECT_ID:
         raise OAuthProviderNotConfigured()
 
     try:
-        # verify_oauth2_token เป็น blocking call (fetch Google public certs ผ่าน HTTP)
+        # verify_firebase_token เป็น blocking call (fetch Google public certs ผ่าน HTTP)
         # ต้องรันใน thread แยกกัน block event loop หลักของ FastAPI
+        # audience = Firebase project id → เช็ค aud + iss (securetoken.google.com/<project>)
         payload = await asyncio.to_thread(
-            google_id_token.verify_oauth2_token,
+            google_id_token.verify_firebase_token,
             data.id_token,
             google_requests.Request(),
-            settings.GOOGLE_CLIENT_ID,
+            settings.FIREBASE_PROJECT_ID,
         )
     except ValueError:
         # ครอบคลุมทั้ง signature ผิด, หมดอายุ, audience/issuer ไม่ตรง — google-auth
@@ -187,9 +189,12 @@ async def google_login(
         raise OAuthTokenInvalid()
 
     if not payload.get("email_verified", False):
-        # ไม่เชื่อ email ที่ Google ยังไม่ยืนยัน — กันเอา email มั่วมาผูกกับบัญชีคนอื่น
+        # ไม่เชื่อ email ที่ยังไม่ยืนยัน — กันเอา email มั่วมาผูกกับบัญชีคนอื่น
         raise OAuthEmailNotVerified()
 
+    # sub ของ Firebase token = Firebase uid (stable ต่อ user ใน project) — ใช้เป็น key
+    # เก็บใน provider_user_id. provider คงเป็น google (sign-in method ตอนนี้มีแค่ Google) —
+    # ถ้าเพิ่ม Firebase sign-in provider อื่นภายหลัง ค่อยทบทวน key/provider
     provider_user_id: str = payload["sub"]
     email: str = payload["email"]
 

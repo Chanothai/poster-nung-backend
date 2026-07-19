@@ -44,7 +44,8 @@ class RefreshRequest(BaseModel):
 
 
 class GoogleLoginRequest(BaseModel):
-    # ID token จาก Google Sign-In SDK บน mobile app (JWT ที่ Google เซ็นให้)
+    # Firebase ID token จาก Firebase Auth (Google sign-in) บน mobile app —
+    # JWT ที่ Firebase เซ็นให้ backend verify กับ project id (aud) เอง
     id_token: str = Field(min_length=1)
 
 
