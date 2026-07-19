@@ -12,6 +12,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.posters import router as posters_router
 from app.core.config import settings
 from app.core.database import async_session_maker
 from app.core.exceptions import AppError
@@ -43,6 +44,7 @@ if settings.CORS_ORIGINS:
     )
 
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(posters_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["Ops"])

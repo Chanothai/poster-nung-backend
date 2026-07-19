@@ -89,3 +89,10 @@ class Unauthorized(AppError):
     status_code = 401
     error_code = "UNAUTHORIZED"
     message = "กรุณาเข้าสู่ระบบ"
+
+
+# ---- F2 Catalog errors ----
+class PosterNotFound(AppError):
+    status_code = 404
+    error_code = "POSTER_NOT_FOUND"
+    message = "ไม่พบโปสเตอร์นี้ในระบบ"
