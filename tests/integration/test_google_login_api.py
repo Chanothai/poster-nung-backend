@@ -7,6 +7,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.core.config import settings
+from app.services import auth_service
 
 API = "/api/v1/auth"
 
@@ -29,17 +30,22 @@ def _firebase_payload(
 
 
 @pytest.fixture(autouse=True)
-def _firebase_project_configured():
-    original = settings.FIREBASE_PROJECT_ID
+def _firebase_configured():
+    """ตั้ง Firebase config ชั่วคราว + mock init (ไม่ให้ไป parse cred จริง) ระหว่าง test."""
+    orig_pid = settings.FIREBASE_PROJECT_ID
+    orig_sa = settings.FIREBASE_SERVICE_ACCOUNT_JSON
     settings.FIREBASE_PROJECT_ID = "posternung"
-    yield
-    settings.FIREBASE_PROJECT_ID = original
+    settings.FIREBASE_SERVICE_ACCOUNT_JSON = '{"type":"service_account"}'
+    with patch("app.services.auth_service._ensure_firebase_app"):
+        yield
+    settings.FIREBASE_PROJECT_ID = orig_pid
+    settings.FIREBASE_SERVICE_ACCOUNT_JSON = orig_sa
 
 
 async def test_google_login_returns_token_and_me_works(client: AsyncClient) -> None:
     payload = _firebase_payload(email="google-flow@test.example")
     with patch(
-        "app.services.auth_service.google_id_token.verify_firebase_token",
+        "app.services.auth_service.firebase_auth.verify_id_token",
         return_value=payload,
     ):
         res = await client.post(f"{API}/google", json={"id_token": "fake-token"})
@@ -62,7 +68,7 @@ async def test_google_login_returns_token_and_me_works(client: AsyncClient) -> N
 async def test_google_login_email_not_verified_403(client: AsyncClient) -> None:
     payload = _firebase_payload(email="unverified-http@test.example", verified=False)
     with patch(
-        "app.services.auth_service.google_id_token.verify_firebase_token",
+        "app.services.auth_service.firebase_auth.verify_id_token",
         return_value=payload,
     ):
         res = await client.post(f"{API}/google", json={"id_token": "fake-token"})
@@ -73,8 +79,8 @@ async def test_google_login_email_not_verified_403(client: AsyncClient) -> None:
 
 async def test_google_login_invalid_token_401(client: AsyncClient) -> None:
     with patch(
-        "app.services.auth_service.google_id_token.verify_firebase_token",
-        side_effect=ValueError("bad token"),
+        "app.services.auth_service.firebase_auth.verify_id_token",
+        side_effect=auth_service.firebase_auth.InvalidIdTokenError("bad token"),
     ):
         res = await client.post(f"{API}/google", json={"id_token": "garbage"})
 

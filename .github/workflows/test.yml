@@ -1,10 +1,13 @@
-# CI/CD — test (F6) → build once → promote image sha เดิมข้าม sit → uat → production
+# CI/CD — test (F6) → build once → deploy production (single server)
 #
 # ทำไมรวม build/deploy ไว้ในไฟล์เดียวกับ test (ไม่แยก deploy.yml):
 #   GitHub Actions `needs:` อ้าง job ได้เฉพาะ "ในไฟล์ workflow เดียวกัน" เท่านั้น
 #   การแยกไฟล์ต้องใช้ `workflow_run` (คนละกลไก, ไม่ใช่ needs:) และ gate ได้อ่อนกว่า
-#   → รวมไฟล์เดียวเพื่อให้ build/deploy `needs: test` จริง และ promote ด้วย GitHub
-#     Environments (required reviewers) เป็น gate ระหว่าง env
+#   → รวมไฟล์เดียวเพื่อให้ build/deploy `needs: test` จริง และ deploy-production
+#     ใช้ GitHub Environment (required reviewer) เป็น manual-approval gate
+#
+# sit/uat ไม่ได้ wire เข้า pipeline นี้ (docker-compose.sit.yml/uat.yml + deploy.sh
+# ยังรองรับอยู่เผื่อใช้ทีหลัง) เพราะตอนนี้มี target server จริงแค่ตัวเดียว (production)
 name: CI/CD
 
 on:
@@ -81,48 +84,58 @@ jobs:
           # tag = commit sha → เป็น artifact เดียวที่ promote ข้ามทุก env (build ครั้งเดียว)
           tags: ${{ steps.image_repo.outputs.value }}:${{ github.sha }}
 
-  # ---------- promote sha เดิม: sit → uat → production (ไม่ build ใหม่) ----------
-  deploy-sit:
+  # ---------- deploy production (image sha เดิมจาก build — ไม่ build ใหม่) ----------
+  # environment: production มี required reviewer เป็น gate — ต้องมีคน approve ใน
+  # GitHub UI ก่อน step ข้างล่างจะรันจริง (server นี้เป็น live production)
+  deploy-production:
     needs: build
     runs-on: ubuntu-latest
-    environment: sit
+    environment: production
+    permissions:
+      contents: read
+      packages: read # ให้ docker login ด้านล่าง pull image private ได้
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy image sha to SIT
-        env:
-          IMAGE_REGISTRY: ${{ needs.build.outputs.image_repo }}
-          IMAGE_TAG: ${{ github.sha }}
-          # ตั้งเป็น per-environment variable ใน GitHub (docker context ของ host ปลายทาง)
-          DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET }}
-        run: ./.github/scripts/deploy.sh sit
 
-  deploy-uat:
-    # ต้องมี build ใน needs ด้วย (ไม่ใช่แค่ deploy-sit) — job output อ่านได้เฉพาะจาก
-    # job ที่อยู่ใน needs: โดยตรงเท่านั้น (transitive ไม่ได้) ลำดับ sit ก่อน uat ยังคงอยู่
-    # เพราะ needs รอทุก job ที่ระบุให้เสร็จก่อน
-    needs: [deploy-sit, build]
-    runs-on: ubuntu-latest
-    environment: uat # ตั้ง required reviewers ใน GitHub Environment = gate promote
-    steps:
-      - uses: actions/checkout@v4
-      - name: Deploy same image sha to UAT
-        env:
-          IMAGE_REGISTRY: ${{ needs.build.outputs.image_repo }}
-          IMAGE_TAG: ${{ github.sha }}
-          # ตั้งเป็น per-environment variable ใน GitHub (docker context ของ host ปลายทาง)
-          DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET }}
-        run: ./.github/scripts/deploy.sh uat
+      # auth ฝั่ง runner เท่านั้น — docker CLI ส่ง registry auth ไปกับทุกคำสั่ง pull
+      # ไม่ว่า daemon ปลายทางจะเป็น local หรือ remote ผ่าน SSH context ก็ตาม
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-  deploy-production:
-    needs: [deploy-uat, build] # เหตุผลเดียวกับ deploy-uat — ต้องมี build เพื่ออ่าน output ได้
-    runs-on: ubuntu-latest
-    environment: production # required reviewers = manual approval gate
-    steps:
-      - uses: actions/checkout@v4
-      - name: Deploy same image sha to PRODUCTION
+      # runner เป็น ephemeral (VM ใหม่ทุก run) → ต้องสร้าง SSH key + docker context
+      # ใหม่ทุกครั้ง ไม่มีอะไร persist ข้าม run
+      - name: Set up SSH + docker context to production host
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          {
+            echo "Host deploy-target"
+            echo "  HostName $DEPLOY_HOST"
+            echo "  User $DEPLOY_USER"
+            echo "  IdentityFile ~/.ssh/deploy_key"
+            echo "  IdentitiesOnly yes"
+          } >> ~/.ssh/config
+          docker context create posternung-prod --docker "host=ssh://deploy-target"
+
+      # deploy.sh ใช้ `docker compose --env-file .env.production` ซึ่ง resolve ค่าฝั่ง
+      # client (= runner นี้) ไม่ใช่ฝั่ง remote daemon — ต้องดึงไฟล์จริงจาก server มา
+      # ก่อน (server ยังเป็น source of truth เดียวของ secret นี้ เหมือนเดิม ไม่ duplicate
+      # เข้า GitHub secrets)
+      - name: Fetch .env.production from target host
+        run: scp -F ~/.ssh/config deploy-target:/opt/posternung/.env.production .env.production
+
+      - name: Deploy image sha to PRODUCTION
         env:
           IMAGE_REGISTRY: ${{ needs.build.outputs.image_repo }}
           IMAGE_TAG: ${{ github.sha }}
-          # ตั้งเป็น per-environment variable ใน GitHub (docker context ของ host ปลายทาง)
-          DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET }}
+          DEPLOY_TARGET: posternung-prod
         run: ./.github/scripts/deploy.sh production
