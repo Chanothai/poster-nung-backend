@@ -1,5 +1,6 @@
-"""Unit test ของ auth_service.google_login — mock google_id_token.verify_firebase_token
-เพื่อไม่ต้องพึ่ง Firebase/Google server จริงตอน test."""
+"""Unit test ของ auth_service.google_login — mock firebase_auth.verify_id_token
+เพื่อไม่ต้องพึ่ง Firebase/Google server จริง + ไม่ต้องมี service account credential ตอน test.
+"""
 
 from unittest.mock import patch
 
@@ -37,12 +38,18 @@ def _firebase_payload(
 
 
 @pytest.fixture(autouse=True)
-def _firebase_project_configured():
-    """ตั้ง FIREBASE_PROJECT_ID ชั่วคราวระหว่าง test (default ว่างใน env ของ CI)."""
-    original = settings.FIREBASE_PROJECT_ID
+def _firebase_configured():
+    """ตั้ง Firebase config ชั่วคราว + mock init ระหว่าง test (env ของ CI ทั้งสองค่าว่าง).
+    patch _ensure_firebase_app เป็น no-op เพื่อไม่ให้ไป parse service account cred จริง
+    (dummy JSON ข้างล่างมีไว้ให้ guard ผ่านเฉยๆ ไม่ได้ถูกใช้ init จริง)."""
+    orig_pid = settings.FIREBASE_PROJECT_ID
+    orig_sa = settings.FIREBASE_SERVICE_ACCOUNT_JSON
     settings.FIREBASE_PROJECT_ID = "posternung"
-    yield
-    settings.FIREBASE_PROJECT_ID = original
+    settings.FIREBASE_SERVICE_ACCOUNT_JSON = '{"type":"service_account"}'
+    with patch("app.services.auth_service._ensure_firebase_app"):
+        yield
+    settings.FIREBASE_PROJECT_ID = orig_pid
+    settings.FIREBASE_SERVICE_ACCOUNT_JSON = orig_sa
 
 
 async def test_google_login_new_user_creates_account(db_session: AsyncSession) -> None:
@@ -50,7 +57,7 @@ async def test_google_login_new_user_creates_account(db_session: AsyncSession) -
     hashed_password=None (social-only)."""
     payload = _firebase_payload(email="brand-new@test.example")
     with patch(
-        "app.services.auth_service.google_id_token.verify_firebase_token",
+        "app.services.auth_service.firebase_auth.verify_id_token",
         return_value=payload,
     ):
         result = await auth_service.google_login(
@@ -77,7 +84,7 @@ async def test_google_login_existing_identity_reuses_same_user(
     """login ซ้ำด้วย Google account เดิม → ไม่สร้าง user/identity ซ้ำ คืน user เดิม."""
     payload = _firebase_payload(email="repeat@test.example", sub="google-sub-repeat")
     with patch(
-        "app.services.auth_service.google_id_token.verify_firebase_token",
+        "app.services.auth_service.firebase_auth.verify_id_token",
         return_value=payload,
     ):
         await auth_service.google_login(
@@ -112,7 +119,7 @@ async def test_google_login_auto_links_existing_password_account(
 
     payload = _firebase_payload(email=email, sub="google-sub-link")
     with patch(
-        "app.services.auth_service.google_id_token.verify_firebase_token",
+        "app.services.auth_service.firebase_auth.verify_id_token",
         return_value=payload,
     ):
         await auth_service.google_login(
@@ -139,7 +146,7 @@ async def test_google_login_email_not_verified_rejected(
 ) -> None:
     payload = _firebase_payload(email="unverified@test.example", verified=False)
     with patch(
-        "app.services.auth_service.google_id_token.verify_firebase_token",
+        "app.services.auth_service.firebase_auth.verify_id_token",
         return_value=payload,
     ):
         with pytest.raises(OAuthEmailNotVerified) as exc_info:
@@ -151,8 +158,8 @@ async def test_google_login_email_not_verified_rejected(
 
 async def test_google_login_invalid_token_rejected(db_session: AsyncSession) -> None:
     with patch(
-        "app.services.auth_service.google_id_token.verify_firebase_token",
-        side_effect=ValueError("Token expired"),
+        "app.services.auth_service.firebase_auth.verify_id_token",
+        side_effect=auth_service.firebase_auth.InvalidIdTokenError("Token invalid"),
     ):
         with pytest.raises(OAuthTokenInvalid) as exc_info:
             await auth_service.google_login(
@@ -179,7 +186,7 @@ async def test_password_login_rejected_for_social_only_account(
     ต้องได้ INVALID_CREDENTIALS (401) ไม่ใช่ crash (G: nullable hashed_password)."""
     payload = _firebase_payload(email="social-only@test.example")
     with patch(
-        "app.services.auth_service.google_id_token.verify_firebase_token",
+        "app.services.auth_service.firebase_auth.verify_id_token",
         return_value=payload,
     ):
         await auth_service.google_login(

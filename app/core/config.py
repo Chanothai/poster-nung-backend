@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     # endpoint คืน 503 ชัดเจนแทนที่จะข้าม audience check เงียบๆ (ดู auth_service.google_login)
     FIREBASE_PROJECT_ID: str = ""
 
+    # Firebase service account credential (เนื้อ JSON ทั้งก้อนเป็น string) — **secret**
+    # ได้จาก Firebase console → Project settings → Service accounts → Generate new
+    # private key. firebase-admin ใช้ init app เพื่อ verify_id_token (+ check_revoked)
+    # ว่าง → google_login คืน 503 OAUTH_PROVIDER_NOT_CONFIGURED (เหมือน FIREBASE_PROJECT_ID)
+    FIREBASE_SERVICE_ACCOUNT_JSON: str = ""
+
     # ---- CORS ----
     # NoDecode = ข้าม JSON-decode ของ pydantic-settings ให้ raw string ถึง validator
     # (env var เป็น comma-separated ไม่ใช่ JSON)
