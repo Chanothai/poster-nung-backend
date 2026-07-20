@@ -2,11 +2,13 @@
 google_login (social)."""
 
 import asyncio
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from google.auth.transport import requests as google_requests
-from google.oauth2 import id_token as google_id_token
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+from firebase_admin import credentials as firebase_credentials
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -164,28 +166,51 @@ async def refresh_token(session: AsyncSession, data: RefreshRequest) -> TokenRes
     return await _issue_and_store_tokens(session, user)
 
 
+_firebase_initialized = False
+
+
+def _ensure_firebase_app() -> None:
+    """Init firebase-admin ครั้งเดียว (idempotent) ด้วย service account credential.
+    เรียกตอนใช้งานจริงเท่านั้น (lazy) — ไม่ init ตอน import module เพื่อไม่ให้แอป boot
+    พังถ้ายังไม่ตั้ง credential (เช่น env ที่ไม่ได้เปิด social login)."""
+    global _firebase_initialized
+    if _firebase_initialized:
+        return
+    cred = firebase_credentials.Certificate(
+        json.loads(settings.FIREBASE_SERVICE_ACCOUNT_JSON)
+    )
+    firebase_admin.initialize_app(cred, {"projectId": settings.FIREBASE_PROJECT_ID})
+    _firebase_initialized = True
+
+
 async def google_login(
     session: AsyncSession, data: GoogleLoginRequest
 ) -> TokenResponse:
     """Mobile login ผ่าน Google — client sign-in ด้วย Google ผ่าน Firebase Auth แล้ว
     ส่ง Firebase ID token มา backend verify แล้ว find-or-create user + ออก JWT ชุด
     เดียวกับ login ปกติ."""
-    if not settings.FIREBASE_PROJECT_ID:
+    if not settings.FIREBASE_PROJECT_ID or not settings.FIREBASE_SERVICE_ACCOUNT_JSON:
         raise OAuthProviderNotConfigured()
 
+    _ensure_firebase_app()
     try:
-        # verify_firebase_token เป็น blocking call (fetch Google public certs ผ่าน HTTP)
-        # ต้องรันใน thread แยกกัน block event loop หลักของ FastAPI
-        # audience = Firebase project id → เช็ค aud + iss (securetoken.google.com/<project>)
+        # verify_id_token เป็น blocking call (fetch Google public certs + check_revoked
+        # ยิง RPC ไป Firebase) → รันใน thread แยกกัน block event loop หลักของ FastAPI
+        # check_revoked=True → reject ถ้า user ถูก disable หรือ token ถูก revoke แล้ว
+        # (ข้อได้เปรียบหลักของ firebase-admin เทียบ google-auth)
         payload = await asyncio.to_thread(
-            google_id_token.verify_firebase_token,
+            firebase_auth.verify_id_token,
             data.id_token,
-            google_requests.Request(),
-            settings.FIREBASE_PROJECT_ID,
+            check_revoked=True,
         )
-    except ValueError:
-        # ครอบคลุมทั้ง signature ผิด, หมดอายุ, audience/issuer ไม่ตรง — google-auth
-        # library ใช้ ValueError เดียวสำหรับ token ที่ verify ไม่ผ่านทุกกรณี
+    except (
+        firebase_auth.InvalidIdTokenError,
+        firebase_auth.ExpiredIdTokenError,
+        firebase_auth.RevokedIdTokenError,
+        firebase_auth.CertificateFetchError,
+        firebase_auth.UserDisabledError,
+    ):
+        # ครอบคลุม signature ผิด/หมดอายุ/aud-iss ไม่ตรง/revoke/disabled/ดึง cert ไม่ได้
         raise OAuthTokenInvalid()
 
     if not payload.get("email_verified", False):
