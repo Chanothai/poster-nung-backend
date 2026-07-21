@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.core.limiter import limiter
 from app.models.user import User
 from app.schemas.auth import (
-    GoogleLoginRequest,
+    FirebaseLoginRequest,
     LoginRequest,
     OTPVerifyRequest,
     RefreshRequest,
@@ -77,16 +77,33 @@ async def refresh(
     return result
 
 
-@router.post("/google", response_model=TokenResponse)
+@router.post("/firebase", response_model=TokenResponse)
+@limiter.limit("5/minute")
+async def firebase_login(
+    request: Request,
+    response: Response,  # ให้ slowapi inject rate-limit headers เข้า response นี้ (ไม่ใช้ตรงๆ)
+    data: FirebaseLoginRequest,
+    session: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    """Mobile login ผ่าน Firebase — รองรับ email/password, phone-OTP, และ Google
+    sign-in ผ่าน endpoint เดียว (backend อ่าน sign_in_provider จาก token เอง). client
+    sign-in ด้วย Firebase SDK แล้วแนบ Firebase ID token (getIdToken) มา."""
+    result = await auth_service.firebase_login(session, data)
+    await session.commit()
+    return result
+
+
+@router.post("/google", response_model=TokenResponse, deprecated=True)
 @limiter.limit("5/minute")
 async def google_login(
     request: Request,
     response: Response,  # ให้ slowapi inject rate-limit headers เข้า response นี้ (ไม่ใช้ตรงๆ)
-    data: GoogleLoginRequest,
+    data: FirebaseLoginRequest,
     session: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
-    """Mobile login ผ่าน Google — client แนบ id_token จาก Google Sign-In SDK มา."""
-    result = await auth_service.google_login(session, data)
+    """Deprecated — ใช้ POST /auth/firebase แทน. คงไว้กัน client เดิมพัง (รองรับทุก
+    Firebase sign-in provider เหมือน /auth/firebase)."""
+    result = await auth_service.firebase_login(session, data)
     await session.commit()
     return result
 
