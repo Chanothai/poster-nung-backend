@@ -30,6 +30,18 @@ esac
 # ให้ docker compose ทุกคำสั่งด้านล่างวิ่งไปที่ host ปลายทางผ่าน context นี้
 export DOCKER_CONTEXT="$DEPLOY_TARGET"
 
+# docker compose default project name = basename ของ working directory ตอนรัน คำสั่งนี้
+# ต่างกันระหว่าง manual deploy (cwd /opt/posternung → project "posternung") กับ CI runner
+# (actions/checkout clone เข้า dir ชื่อ repo "poster-nung-backend" → project
+# "poster-nung-backend") — คนละ project label ทำให้ compose มองว่าเป็นคนละ stack กัน
+# ทั้งที่ container_name: ชี้ชื่อเดียวกัน (posternung-<env>-app/db) → พยายามสร้าง
+# container ซ้ำชื่อเดิม แล้ว conflict กับของเดิมที่มีอยู่แล้ว (เจอจริงตอน deploy-production
+# ครั้งแรกผ่าน CI) ต้อง pin ชื่อ project ให้ตรงกันเสมอไม่ว่าจะรันจากไหน
+# หมายเหตุ: ถ้าอนาคตมี sit/uat มา deploy บน host เดียวกันจริง ต้องแยก
+# COMPOSE_PROJECT_NAME ต่อ env (เช่น posternung-sit) กันชนกันเรื่อง default network —
+# ตอนนี้ยังมีแค่ production เดียวจึงยังไม่ต้องแยก
+export COMPOSE_PROJECT_NAME="posternung"
+
 ENV_FILE=".env.${ENV_NAME}"
 OVERRIDE="docker-compose.${ENV_NAME}.yml"
 

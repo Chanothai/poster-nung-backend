@@ -29,7 +29,9 @@ class User(Base, TimestampMixin):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = uuid_pk()
-    email: Mapped[str] = mapped_column(CITEXT, unique=True, nullable=False)
+    # nullable — phone-only user (Firebase Phone Auth) ไม่มี email; unique บน nullable
+    # OK (Postgres ยอมหลาย NULL) — social/email user ยังมี email ตามปกติ
+    email: Mapped[str | None] = mapped_column(CITEXT, unique=True, nullable=True)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # nullable — user ที่สมัครผ่าน social login อย่างเดียว (เช่น Google) ไม่มีรหัสผ่าน
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -100,4 +102,5 @@ class OAuthIdentity(Base, CreatedAtMixin):
     # "sub" claim ของ Google — ตัวระบุบัญชีที่เสถียร (ไม่ใช้ email เป็น key เพราะเปลี่ยนได้)
     provider_user_id: Mapped[str] = mapped_column(String(255), nullable=False)
     # email ตอน link ไว้เพื่อ audit/debug เท่านั้น ไม่ใช่ source of truth (ดูที่ users.email)
-    email: Mapped[str] = mapped_column(CITEXT, nullable=False)
+    # nullable — phone provider ไม่มี email
+    email: Mapped[str | None] = mapped_column(CITEXT, nullable=True)

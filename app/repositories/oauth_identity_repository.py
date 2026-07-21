@@ -27,7 +27,7 @@ async def create(
     user_id: uuid.UUID,
     provider: OAuthProvider,
     provider_user_id: str,
-    email: str,
+    email: str | None,
 ) -> OAuthIdentity:
     identity = OAuthIdentity(
         user_id=user_id,

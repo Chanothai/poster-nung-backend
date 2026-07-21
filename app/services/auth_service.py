@@ -1,5 +1,5 @@
 """Business logic ของ F1 Authentication — register / verify-otp / login / refresh /
-google_login (social)."""
+firebase_login (email-password / phone-OTP / Google ผ่าน Firebase ID token)."""
 
 import asyncio
 import json
@@ -38,7 +38,7 @@ from app.repositories import (
     user_repository,
 )
 from app.schemas.auth import (
-    GoogleLoginRequest,
+    FirebaseLoginRequest,
     LoginRequest,
     OTPVerifyRequest,
     RefreshRequest,
@@ -183,12 +183,20 @@ def _ensure_firebase_app() -> None:
     _firebase_initialized = True
 
 
-async def google_login(
-    session: AsyncSession, data: GoogleLoginRequest
+# map Firebase claim firebase.sign_in_provider -> provider enum ของเรา
+_SIGN_IN_PROVIDER_MAP: dict[str, OAuthProvider] = {
+    "password": OAuthProvider.password,
+    "google.com": OAuthProvider.google,
+    "phone": OAuthProvider.phone,
+}
+
+
+async def firebase_login(
+    session: AsyncSession, data: FirebaseLoginRequest
 ) -> TokenResponse:
-    """Mobile login ผ่าน Google — client sign-in ด้วย Google ผ่าน Firebase Auth แล้ว
-    ส่ง Firebase ID token มา backend verify แล้ว find-or-create user + ออก JWT ชุด
-    เดียวกับ login ปกติ."""
+    """Mobile login ผ่าน Firebase (email/password, phone-OTP, หรือ Google) — client
+    sign-in ด้วย Firebase Auth แล้วส่ง ID token มา backend verify + find-or-create user
+    + ออก JWT ชุดเดียวกับ login ปกติ. รองรับทุก sign-in provider ผ่าน endpoint เดียว."""
     if not settings.FIREBASE_PROJECT_ID or not settings.FIREBASE_SERVICE_ACCOUNT_JSON:
         raise OAuthProviderNotConfigured()
 
@@ -197,7 +205,6 @@ async def google_login(
         # verify_id_token เป็น blocking call (fetch Google public certs + check_revoked
         # ยิง RPC ไป Firebase) → รันใน thread แยกกัน block event loop หลักของ FastAPI
         # check_revoked=True → reject ถ้า user ถูก disable หรือ token ถูก revoke แล้ว
-        # (ข้อได้เปรียบหลักของ firebase-admin เทียบ google-auth)
         payload = await asyncio.to_thread(
             firebase_auth.verify_id_token,
             data.id_token,
@@ -213,18 +220,30 @@ async def google_login(
         # ครอบคลุม signature ผิด/หมดอายุ/aud-iss ไม่ตรง/revoke/disabled/ดึง cert ไม่ได้
         raise OAuthTokenInvalid()
 
-    if not payload.get("email_verified", False):
-        # ไม่เชื่อ email ที่ยังไม่ยืนยัน — กันเอา email มั่วมาผูกกับบัญชีคนอื่น
-        raise OAuthEmailNotVerified()
+    sign_in_provider = (payload.get("firebase") or {}).get("sign_in_provider")
+    provider = _SIGN_IN_PROVIDER_MAP.get(sign_in_provider)
+    if provider is None:
+        # sign-in method ที่ backend ยังไม่รองรับ (เช่น apple.com/facebook.com)
+        raise OAuthTokenInvalid()
 
     # sub ของ Firebase token = Firebase uid (stable ต่อ user ใน project) — ใช้เป็น key
-    # เก็บใน provider_user_id. provider คงเป็น google (sign-in method ตอนนี้มีแค่ Google) —
-    # ถ้าเพิ่ม Firebase sign-in provider อื่นภายหลัง ค่อยทบทวน key/provider
     provider_user_id: str = payload["sub"]
-    email: str = payload["email"]
+
+    if provider is OAuthProvider.phone:
+        # phone: ไม่มี email — SMS OTP verified โดย Firebase แล้ว (ออก token = ยืนยันแล้ว)
+        # find-or-create ด้วย uid เท่านั้น (ไม่ auto-link ด้วย email เพราะไม่มี)
+        email: str | None = None
+        phone: str | None = payload.get("phone_number")
+    else:
+        # password / google: ต้องมี email + email_verified (กัน email มั่วผูกบัญชีคนอื่น —
+        # Google ยืนยันเอง · password ต้อง verify email link ก่อน)
+        if not payload.get("email_verified", False):
+            raise OAuthEmailNotVerified()
+        email = payload["email"]
+        phone = None
 
     identity = await oauth_identity_repository.get_by_provider_user_id(
-        session, provider=OAuthProvider.google, provider_user_id=provider_user_id
+        session, provider=provider, provider_user_id=provider_user_id
     )
     if identity is not None:
         user = await session.get(User, identity.user_id)
@@ -233,14 +252,16 @@ async def google_login(
             raise OAuthLoginConflict()
         return await _issue_and_store_tokens(session, user)
 
-    # ยังไม่เคย link Google account นี้มาก่อน — หา user เดิมจาก email (auto-link ถ้า
-    # Google ยืนยัน email แล้ว) หรือสร้างใหม่ (social-only, ไม่มีรหัสผ่าน)
+    # ยังไม่เคย link provider นี้มาก่อน — auto-link user เดิมด้วย email (เฉพาะ provider
+    # ที่มี email) หรือสร้างใหม่ (firebase-only, ไม่มีรหัสผ่าน local)
     try:
         async with session.begin_nested():  # savepoint กันแพ้ race ทำ transaction หลักพัง
-            user = await user_repository.get_by_email(session, email)
+            user = None
+            if email is not None:
+                user = await user_repository.get_by_email(session, email)
             if user is None:
                 user = await user_repository.create(
-                    session, email=email, hashed_password=None
+                    session, email=email, hashed_password=None, phone=phone
                 )
             if not user.is_verified:
                 await user_repository.set_verified(session, user.id)
@@ -249,15 +270,15 @@ async def google_login(
             await oauth_identity_repository.create(
                 session,
                 user_id=user.id,
-                provider=OAuthProvider.google,
+                provider=provider,
                 provider_user_id=provider_user_id,
                 email=email,
             )
     except IntegrityError:
-        # แพ้ race: อีก request login Google account เดียวกันพร้อมกัน สร้าง
-        # user/identity ไปก่อน — savepoint rollback แล้ว ลองอ่านซ้ำครั้งเดียว
+        # แพ้ race: อีก request login provider/uid เดียวกันพร้อมกัน สร้าง user/identity
+        # ไปก่อน — savepoint rollback แล้ว ลองอ่านซ้ำครั้งเดียว
         identity = await oauth_identity_repository.get_by_provider_user_id(
-            session, provider=OAuthProvider.google, provider_user_id=provider_user_id
+            session, provider=provider, provider_user_id=provider_user_id
         )
         if identity is None:
             raise OAuthLoginConflict()
@@ -266,3 +287,11 @@ async def google_login(
             raise OAuthLoginConflict()
 
     return await _issue_and_store_tokens(session, user)
+
+
+async def google_login(
+    session: AsyncSession, data: FirebaseLoginRequest
+) -> TokenResponse:
+    """Deprecated alias ของ firebase_login — คงไว้กัน caller เดิม (/auth/google) พัง.
+    ตรวจ sign_in_provider จาก token เอง จึงรองรับทุก provider เหมือน firebase_login."""
+    return await firebase_login(session, data)

@@ -99,3 +99,96 @@ async def test_google_login_provider_not_configured_503(client: AsyncClient) -> 
     res = await client.post(f"{API}/google", json={"id_token": "fake-token"})
     assert res.status_code == 503
     assert res.json()["error_code"] == "OAUTH_PROVIDER_NOT_CONFIGURED"
+
+
+def _password_payload(
+    *, sub: str = "firebase-pw-http", email: str = "pwhttp@test.example", verified=True
+) -> dict:
+    return {
+        "iss": "https://securetoken.google.com/posternung",
+        "aud": "posternung",
+        "sub": sub,
+        "email": email,
+        "email_verified": verified,
+        "firebase": {
+            "identities": {"email": [email]},
+            "sign_in_provider": "password",
+        },
+    }
+
+
+def _phone_payload(
+    *, sub: str = "firebase-phone-http", phone_number: str = "+66822222222"
+) -> dict:
+    return {
+        "iss": "https://securetoken.google.com/posternung",
+        "aud": "posternung",
+        "sub": sub,
+        "phone_number": phone_number,
+        "firebase": {
+            "identities": {"phone": [phone_number]},
+            "sign_in_provider": "phone",
+        },
+    }
+
+
+async def test_firebase_password_login_returns_token_and_me_works(
+    client: AsyncClient,
+) -> None:
+    """POST /auth/firebase ด้วย email/password token → ออก JWT + /me คืน email ถูกต้อง."""
+    payload = _password_payload(email="pw-flow@test.example")
+    with patch(
+        "app.services.auth_service.firebase_auth.verify_id_token",
+        return_value=payload,
+    ):
+        res = await client.post(f"{API}/firebase", json={"id_token": "fake-token"})
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["access_token"] and body["refresh_token"]
+
+    me = await client.get(
+        f"{API}/me", headers={"Authorization": f"Bearer {body['access_token']}"}
+    )
+    assert me.status_code == 200
+    assert me.json()["email"] == "pw-flow@test.example"
+    assert me.json()["is_verified"] is True
+
+
+async def test_firebase_phone_login_returns_token_and_me_null_email(
+    client: AsyncClient,
+) -> None:
+    """POST /auth/firebase ด้วย phone token → ออก JWT + /me คืน email=None, phone ตรง."""
+    payload = _phone_payload(phone_number="+66833333333", sub="phone-http-flow")
+    with patch(
+        "app.services.auth_service.firebase_auth.verify_id_token",
+        return_value=payload,
+    ):
+        res = await client.post(f"{API}/firebase", json={"id_token": "fake-token"})
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["access_token"] and body["refresh_token"]
+
+    me = await client.get(
+        f"{API}/me", headers={"Authorization": f"Bearer {body['access_token']}"}
+    )
+    assert me.status_code == 200
+    me_body = me.json()
+    assert me_body["email"] is None  # phone-only user ไม่มี email
+    assert me_body["phone"] == "+66833333333"
+    assert me_body["is_verified"] is True
+
+
+async def test_firebase_unsupported_provider_401(client: AsyncClient) -> None:
+    """sign_in_provider ที่ยังไม่รองรับ (apple.com) → 401 OAUTH_TOKEN_INVALID."""
+    payload = _firebase_payload(email="apple-http@test.example")
+    payload["firebase"]["sign_in_provider"] = "apple.com"
+    with patch(
+        "app.services.auth_service.firebase_auth.verify_id_token",
+        return_value=payload,
+    ):
+        res = await client.post(f"{API}/firebase", json={"id_token": "fake-token"})
+
+    assert res.status_code == 401
+    assert res.json()["error_code"] == "OAUTH_TOKEN_INVALID"

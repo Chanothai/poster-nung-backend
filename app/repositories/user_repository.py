@@ -16,11 +16,12 @@ async def get_by_email(session: AsyncSession, email: str) -> User | None:
 async def create(
     session: AsyncSession,
     *,
-    email: str,
+    email: str | None = None,
     hashed_password: str | None = None,
     phone: str | None = None,
 ) -> User:
-    # hashed_password=None → user สมัครผ่าน social login อย่างเดียว (ยังไม่มีรหัสผ่าน)
+    # email=None → phone-only user (Firebase Phone Auth) · hashed_password=None →
+    # user สมัครผ่าน social/firebase อย่างเดียว (ยังไม่มีรหัสผ่าน local)
     user = User(email=email, hashed_password=hashed_password, phone=phone)
     session.add(user)
     await session.flush()  # ให้ได้ id/created_at กลับมาโดยไม่ commit

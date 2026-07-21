@@ -43,10 +43,14 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
-class GoogleLoginRequest(BaseModel):
-    # Firebase ID token จาก Firebase Auth (Google sign-in) บน mobile app —
-    # JWT ที่ Firebase เซ็นให้ backend verify กับ project id (aud) เอง
+class FirebaseLoginRequest(BaseModel):
+    # Firebase ID token จาก Firebase Auth (email/password, phone-OTP, หรือ Google
+    # sign-in) บน mobile app — JWT ที่ Firebase เซ็นให้ backend verify กับ project id
     id_token: str = Field(min_length=1)
+
+
+# deprecated alias — ชื่อเดิมสมัยรองรับแค่ Google (คงไว้กัน caller เดิมพัง)
+GoogleLoginRequest = FirebaseLoginRequest
 
 
 # ---- Responses ----
@@ -60,7 +64,8 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    email: EmailStr
+    # nullable — phone-only user (Firebase Phone Auth) ไม่มี email
+    email: EmailStr | None
     phone: str | None
     is_verified: bool
     created_at: datetime

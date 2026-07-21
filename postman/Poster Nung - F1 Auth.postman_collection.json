@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "ac5b6c26-ea89-4748-9766-95915870e88b",
     "name": "Poster Nung - F1 Authentication",
-    "description": "Collection ทดสอบ F1 Authentication API ของ Poster Nung Backend\n\nอ้างอิงจาก docs/openapi.yaml และ docs/api-contract-f1-f3.md (source of truth)\n\n**ก่อนใช้:**\n1. Import environment 'Poster Nung - Local.postman_environment.json' คู่กัน แล้วเลือกเป็น active environment\n2. เช็คว่า backend รันอยู่ที่ port ตรงกับ base_url ในไฟล์ environment (default: http://127.0.0.1:8000)\n3. ต้องตั้ง DEBUG=true ใน .env ของ backend ไม่งั้น response register จะไม่มี dev_otp ให้ใช้ต่อ\n\n**โครงสร้าง:**\n- 01 - Happy Path: รันเรียงลำดับ 1→4 (สมัคร → verify → login → refresh)\n- 02 - Negative Cases: เทส error code ต่างๆ ตาม error catalog — บาง request ต้องรันต่อจาก request อื่นก่อน (ดู Description ของแต่ละอัน)\n- 03 - Rate Limit: ต้องใช้ Collection Runner ยิงซ้ำ 6 รอบ (Postman เดี่ยวๆ ยิง burst ไม่ได้)\n- 04 - Google Login: POST /auth/google (Firebase ID token) — happy path ต้องใช้ id_token จริงจาก mobile app, ดู note ใน folder description\n- 05 - Rate Limit (Google): เหมือน 03 แต่สำหรับ /auth/google — ต้องใช้ Collection Runner",
+    "description": "Collection ทดสอบ F1 Authentication API ของ Poster Nung Backend\n\nอ้างอิงจาก docs/openapi.yaml และ docs/api-contract-f1-f3.md (source of truth)\n\n**ก่อนใช้:**\n1. Import environment 'Poster Nung - Local.postman_environment.json' คู่กัน แล้วเลือกเป็น active environment\n2. เช็คว่า backend รันอยู่ที่ port ตรงกับ base_url ในไฟล์ environment (default: http://127.0.0.1:8000)\n3. ต้องตั้ง DEBUG=true ใน .env ของ backend ไม่งั้น response register จะไม่มี dev_otp ให้ใช้ต่อ\n\n**โครงสร้าง:**\n- 01 - Happy Path: รันเรียงลำดับ 1→4 (สมัคร → verify → login → refresh)\n- 02 - Negative Cases: เทส error code ต่างๆ ตาม error catalog — บาง request ต้องรันต่อจาก request อื่นก่อน (ดู Description ของแต่ละอัน)\n- 03 - Rate Limit: ต้องใช้ Collection Runner ยิงซ้ำ 6 รอบ (Postman เดี่ยวๆ ยิง burst ไม่ได้)\n- 04 - Firebase Login: POST /auth/firebase (endpoint หลัก — รองรับ email/password, phone-OTP, และ Google ผ่าน Firebase ID token เดียวกัน) — happy path ต้องใช้ id_token จริงจาก mobile app, ดู note ใน folder description\n- 05 - Google Login (Deprecated): POST /auth/google — alias เก่าของ /auth/firebase พฤติกรรมเหมือนกันทุกอย่าง คงไว้กัน client เดิมพัง\n- 06 - Rate Limit (Google): เหมือน 03 แต่สำหรับ /auth/google — ต้องใช้ Collection Runner",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -978,8 +978,265 @@
       ]
     },
     {
-      "name": "04 - Google Login",
-      "description": "POST /auth/google — mobile login ผ่าน Google Sign-In โดย verify Firebase ID token (app/services/auth_service.py ใช้ google_id_token.verify_firebase_token กับ Google/Firebase server จริง)\n\n**ข้อจำกัดสำคัญ:** endpoint นี้ verify กับ Google/Firebase server จริง — Postman mock ไม่ได้เหมือน pytest (tests/integration/test_google_login_api.py mock verify_firebase_token ไว้)\n- Happy path (200) ต้องใช้ id_token จริงจาก Firebase test user ที่ sign-in ผ่าน mobile app แล้ว — เอา id_token มาใส่ environment variable 'firebase_id_token' เอง ก่อนรัน request '1. Google Login'\n- 403 OAUTH_EMAIL_NOT_VERIFIED / 409 OAUTH_LOGIN_CONFLICT / 503 OAUTH_PROVIDER_NOT_CONFIGURED ทดสอบผ่าน Postman ตรงๆ ไม่ได้ (ต้องปลอม token claim หรือแก้ config เซิร์ฟเวอร์) — cover ครบแล้วใน tests/integration/test_google_login_api.py\n- 422 (missing id_token) และ 401 (garbage id_token — verify ไม่ผ่านจริง) ทดสอบผ่าน Postman ได้ตรงๆ ไม่ต้อง mock",
+      "name": "04 - Firebase Login (unified: password / phone / google)",
+      "description": "POST /auth/firebase — endpoint หลักสำหรับ mobile login ทุกวิธีผ่าน Firebase Auth (email/password, phone SMS-OTP, หรือ Google) ในที่เดียว. client sign-in ด้วย Firebase SDK ก่อน แล้วส่ง Firebase ID token (getIdToken()) มาที่นี่ — backend อ่าน claim firebase.sign_in_provider เองเพื่อแยกจัดการ (ดู docs/api-contract-f1-f3.md §6)\n\n**ข้อจำกัดสำคัญ:** endpoint นี้ verify กับ Firebase server จริง — Postman mock ไม่ได้เหมือน pytest (tests/unit/test_google_login.py + tests/integration/test_google_login_api.py mock verify_id_token ไว้ครบทุก provider)\n- Happy path (200) ต้องใช้ id_token จริงจาก Firebase test user ที่ sign-in ผ่าน mobile app แล้ว:\n  - email/password หรือ Google → ใส่ environment variable 'firebase_id_token' ก่อนรัน '1. Firebase Login - password/google'\n  - phone-OTP → ใส่ 'firebase_phone_id_token' ก่อนรัน '2. Firebase Login - phone' (user ที่ได้จะมี email=null, phone=เบอร์จาก token)\n- 403 OAUTH_EMAIL_NOT_VERIFIED / 409 OAUTH_LOGIN_CONFLICT / 503 OAUTH_PROVIDER_NOT_CONFIGURED ทดสอบผ่าน Postman ตรงๆ ไม่ได้ (ต้องปลอม token claim หรือแก้ config เซิร์ฟเวอร์) — cover ครบแล้วใน tests/unit/test_google_login.py\n- 422 (missing id_token) และ 401 (garbage id_token — verify ไม่ผ่านจริง) ทดสอบผ่าน Postman ได้ตรงๆ ไม่ต้อง mock",
+      "item": [
+        {
+          "name": "1. Firebase Login - password/google (ต้องใช้ id_token จริง)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('firebase_id_token')) {",
+                  "    console.warn('ยังไม่ได้ตั้งค่า firebase_id_token ใน environment — sign-in ผ่าน mobile app จริงก่อน (email/password หรือ Google) แล้วเอา id_token มาใส่ ไม่งั้น request นี้จะได้ 401 OAUTH_TOKEN_INVALID เสมอ');",
+                  "}",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    pm.test('ได้ access_token และ refresh_token', () => {",
+                  "        pm.expect(json.access_token).to.be.a('string').and.not.empty;",
+                  "        pm.expect(json.refresh_token).to.be.a('string').and.not.empty;",
+                  "        pm.expect(json.token_type).to.eql('bearer');",
+                  "    });",
+                  "    pm.environment.set('firebase_access_token', json.access_token);",
+                  "} else {",
+                  "    console.warn('status ' + pm.response.code + ' — ดู error_code ใน response ว่าตรงกับที่คาดไหม (มักเป็น 401 OAUTH_TOKEN_INVALID ถ้า firebase_id_token ว่าง/หมดอายุ)');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/firebase",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "firebase"
+              ]
+            },
+            "description": "ต้องตั้ง environment variable 'firebase_id_token' เป็น Firebase ID token จริง (sign-in ด้วย email/password หรือ Google ผ่าน Firebase SDK บน mobile app แล้วเอา token มา) ก่อนรัน ไม่งั้นจะได้ 401 OAUTH_TOKEN_INVALID เสมอ (verify กับ Firebase server จริง mock ไม่ได้)\nสำเร็จแล้วเก็บ access_token ไว้ที่ 'firebase_access_token'",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token\": \"{{firebase_id_token}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "2. Firebase Login - phone (ต้องใช้ id_token จริง)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('firebase_phone_id_token')) {",
+                  "    console.warn('ยังไม่ได้ตั้งค่า firebase_phone_id_token ใน environment — sign-in ด้วย Firebase Phone Auth (SMS OTP) ผ่าน mobile app จริงก่อน แล้วเอา id_token มาใส่ ไม่งั้น request นี้จะได้ 401 OAUTH_TOKEN_INVALID เสมอ');",
+                  "}",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "    const json = pm.response.json();",
+                  "    pm.test('ได้ access_token และ refresh_token', () => {",
+                  "        pm.expect(json.access_token).to.be.a('string').and.not.empty;",
+                  "        pm.expect(json.refresh_token).to.be.a('string').and.not.empty;",
+                  "        pm.expect(json.token_type).to.eql('bearer');",
+                  "    });",
+                  "    pm.environment.set('firebase_access_token', json.access_token);",
+                  "} else {",
+                  "    console.warn('status ' + pm.response.code + ' — ดู error_code ใน response ว่าตรงกับที่คาดไหม (มักเป็น 401 OAUTH_TOKEN_INVALID ถ้า firebase_phone_id_token ว่าง/หมดอายุ)');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/firebase",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "firebase"
+              ]
+            },
+            "description": "ต้องตั้ง environment variable 'firebase_phone_id_token' เป็น Firebase ID token จริงจาก Phone Auth (sign_in_provider=phone) — SMS OTP ยืนยันโดย Firebase SDK บน mobile app แล้วเอา token มา ก่อนรัน ไม่งั้นจะได้ 401 OAUTH_TOKEN_INVALID เสมอ\nUser ที่ได้จะมี email=null (phone-only user) + phone=เบอร์จาก token claim — ไม่มีการเช็ค email_verified สำหรับ provider นี้ (SMS OTP ยืนยันจาก Firebase มาแล้ว)\nสำเร็จแล้วเก็บ access_token ไว้ที่ 'firebase_access_token' เดียวกับ request ก่อนหน้า",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token\": \"{{firebase_phone_id_token}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "3. Get Me (ยืนยันว่า token ใช้ auth ได้จริง)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('response ไม่มี hashed_password หลุดออกมา', () => {",
+                  "    pm.expect(json).to.not.have.property('hashed_password');",
+                  "});",
+                  "pm.test('is_verified เป็น true (Firebase login ทุก provider = ยืนยันตัวตนแล้ว)', () => {",
+                  "    pm.expect(json.is_verified).to.eql(true);",
+                  "});",
+                  "// email เป็น null ได้ถ้า login ด้วย phone provider — ไม่ assert ว่าต้องมีค่าเสมอ"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{firebase_access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            },
+            "description": "ยืนยันว่า access_token จาก Firebase login (provider ไหนก็ได้) ใช้เรียก protected endpoint ได้ปกติเหมือน email/password flow — ต้องรันต่อจาก request '1.' หรือ '2.' ที่สำเร็จแล้ว"
+          },
+          "response": []
+        },
+        {
+          "name": "Negative: Missing id_token (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', () => pm.response.to.have.status(422));",
+                  "const json = pm.response.json();",
+                  "pm.test('error_code = VALIDATION_ERROR', () => pm.expect(json.error_code).to.eql('VALIDATION_ERROR'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/firebase",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "firebase"
+              ]
+            },
+            "description": "ไม่ส่ง id_token เลย — FastAPI/Pydantic validation fail ก่อนถึง service",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Negative: Invalid/Garbage id_token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', () => pm.response.to.have.status(401));",
+                  "const json = pm.response.json();",
+                  "pm.test('error_code = OAUTH_TOKEN_INVALID', () => pm.expect(json.error_code).to.eql('OAUTH_TOKEN_INVALID'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/firebase",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "firebase"
+              ]
+            },
+            "description": "ส่ง string มั่วๆ ที่ไม่ใช่ Firebase ID token จริง — verify กับ Firebase server จริงจะ fail แน่นอน (ไม่ต้อง mock) ได้ 401 OAUTH_TOKEN_INVALID",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token\": \"not-a-real-firebase-token\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "05 - Google Login (Deprecated — ใช้ 04 Firebase Login แทน)",
+      "description": "POST /auth/google — [Deprecated] alias เก่าของ POST /auth/firebase คงไว้กัน client เดิมพังเท่านั้น พฤติกรรมเหมือนกันทุกประการ (รองรับทุก sign_in_provider ไม่ใช่แค่ Google — อ่าน claim จาก token เอง) client ใหม่ให้ใช้ folder '04 - Firebase Login' แทน\n\n**ข้อจำกัดสำคัญ:** endpoint นี้ verify กับ Google/Firebase server จริง — Postman mock ไม่ได้เหมือน pytest (tests/integration/test_google_login_api.py mock verify_id_token ไว้)\n- Happy path (200) ต้องใช้ id_token จริงจาก Firebase test user ที่ sign-in ผ่าน mobile app แล้ว — เอา id_token มาใส่ environment variable 'firebase_id_token' เอง ก่อนรัน request '1. Google Login'\n- 403 OAUTH_EMAIL_NOT_VERIFIED / 409 OAUTH_LOGIN_CONFLICT / 503 OAUTH_PROVIDER_NOT_CONFIGURED ทดสอบผ่าน Postman ตรงๆ ไม่ได้ (ต้องปลอม token claim หรือแก้ config เซิร์ฟเวอร์) — cover ครบแล้วใน tests/integration/test_google_login_api.py\n- 422 (missing id_token) และ 401 (garbage id_token — verify ไม่ผ่านจริง) ทดสอบผ่าน Postman ได้ตรงๆ ไม่ต้อง mock",
       "item": [
         {
           "name": "1. Google Login (ต้องใช้ id_token จริง)",
@@ -1176,7 +1433,7 @@
       ]
     },
     {
-      "name": "05 - Rate Limit (Google, ต้องใช้ Collection Runner)",
+      "name": "06 - Rate Limit (Google, ต้องใช้ Collection Runner)",
       "description": "POST /auth/google มี rate-limit 5/minute เหมือนกับ /auth/login (app/api/v1/auth.py)\nเปิด Collection Runner (คลิกขวาที่ folder นี้ > Run folder) ตั้ง Iterations = 6 ขึ้นไป — ใช้ garbage id_token ได้เลย ไม่ต้องมี id_token จริง เพราะทดสอบแค่ rate-limit ไม่ได้ทดสอบ happy path",
       "item": [
         {

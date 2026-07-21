@@ -16,7 +16,12 @@ from app.core.exceptions import (
 )
 from app.models.enums import OAuthProvider
 from app.repositories import oauth_identity_repository, user_repository
-from app.schemas.auth import GoogleLoginRequest, LoginRequest, RegisterRequest
+from app.schemas.auth import (
+    FirebaseLoginRequest,
+    GoogleLoginRequest,
+    LoginRequest,
+    RegisterRequest,
+)
 from app.services import auth_service
 
 
@@ -33,6 +38,39 @@ def _firebase_payload(
         "firebase": {
             "identities": {"google.com": ["google-sub-x"], "email": [email]},
             "sign_in_provider": "google.com",
+        },
+    }
+
+
+def _password_payload(
+    *, sub: str = "firebase-pw-uid", email: str = "pwtest@test.example", verified=True
+) -> dict:
+    """claim แบบ Firebase email/password sign-in (sign_in_provider='password')."""
+    return {
+        "iss": "https://securetoken.google.com/posternung",
+        "aud": "posternung",
+        "sub": sub,
+        "email": email,
+        "email_verified": verified,
+        "firebase": {
+            "identities": {"email": [email]},
+            "sign_in_provider": "password",
+        },
+    }
+
+
+def _phone_payload(
+    *, sub: str = "firebase-phone-uid", phone_number: str = "+66812345678"
+) -> dict:
+    """claim แบบ Firebase Phone Auth (sign_in_provider='phone', ไม่มี email)."""
+    return {
+        "iss": "https://securetoken.google.com/posternung",
+        "aud": "posternung",
+        "sub": sub,
+        "phone_number": phone_number,
+        "firebase": {
+            "identities": {"phone": [phone_number]},
+            "sign_in_provider": "phone",
         },
     }
 
@@ -198,4 +236,127 @@ async def test_password_login_rejected_for_social_only_account(
             db_session,
             LoginRequest(email="social-only@test.example", password="AnyPassword1"),
         )
+    assert exc_info.value.status_code == 401
+
+
+# --- Firebase email/password sign-in (sign_in_provider='password') ---
+
+
+async def test_firebase_password_new_user_creates_account(
+    db_session: AsyncSession,
+) -> None:
+    """email/password ผ่าน Firebase (verified) → สร้าง user ใหม่ + identity provider
+    'password', is_verified=True, hashed_password=None (verify ที่ Firebase ไม่ใช่ local).
+    """
+    payload = _password_payload(email="pw-new@test.example")
+    with patch(
+        "app.services.auth_service.firebase_auth.verify_id_token",
+        return_value=payload,
+    ):
+        result = await auth_service.firebase_login(
+            db_session, FirebaseLoginRequest(id_token="fake-token")
+        )
+
+    assert result.access_token and result.refresh_token
+
+    user = await user_repository.get_by_email(db_session, "pw-new@test.example")
+    assert user is not None
+    assert user.is_verified is True
+    assert user.hashed_password is None
+
+    identity = await oauth_identity_repository.get_by_provider_user_id(
+        db_session, provider=OAuthProvider.password, provider_user_id=payload["sub"]
+    )
+    assert identity is not None
+    assert identity.user_id == user.id
+
+
+async def test_firebase_password_email_not_verified_rejected(
+    db_session: AsyncSession,
+) -> None:
+    """password provider ที่ยังไม่ verify email → 403 (บังคับ verify email link ก่อน)."""
+    payload = _password_payload(email="pw-unverified@test.example", verified=False)
+    with patch(
+        "app.services.auth_service.firebase_auth.verify_id_token",
+        return_value=payload,
+    ):
+        with pytest.raises(OAuthEmailNotVerified) as exc_info:
+            await auth_service.firebase_login(
+                db_session, FirebaseLoginRequest(id_token="fake-token")
+            )
+    assert exc_info.value.status_code == 403
+
+
+# --- Firebase Phone Auth (sign_in_provider='phone') ---
+
+
+async def test_firebase_phone_new_user_creates_account(
+    db_session: AsyncSession,
+) -> None:
+    """Phone Auth: SMS OTP verified โดย Firebase แล้ว → สร้าง user email=NULL,
+    phone=phone_number, identity provider 'phone', ไม่เช็ค email_verified."""
+    payload = _phone_payload(phone_number="+66899999999", sub="phone-uid-new")
+    with patch(
+        "app.services.auth_service.firebase_auth.verify_id_token",
+        return_value=payload,
+    ):
+        result = await auth_service.firebase_login(
+            db_session, FirebaseLoginRequest(id_token="fake-token")
+        )
+
+    assert result.access_token and result.refresh_token
+
+    identity = await oauth_identity_repository.get_by_provider_user_id(
+        db_session, provider=OAuthProvider.phone, provider_user_id="phone-uid-new"
+    )
+    assert identity is not None
+    assert identity.email is None
+
+    user = await db_session.get(auth_service.User, identity.user_id)
+    assert user is not None
+    assert user.email is None  # phone-only user ไม่มี email (nullable)
+    assert user.phone == "+66899999999"
+    assert user.is_verified is True
+    assert user.hashed_password is None
+
+
+async def test_firebase_phone_existing_identity_reuses_same_user(
+    db_session: AsyncSession,
+) -> None:
+    """login ซ้ำด้วยเบอร์เดิม (uid เดิม) → ไม่สร้าง user/identity ซ้ำ."""
+    payload = _phone_payload(phone_number="+66811111111", sub="phone-uid-repeat")
+    with patch(
+        "app.services.auth_service.firebase_auth.verify_id_token",
+        return_value=payload,
+    ):
+        await auth_service.firebase_login(
+            db_session, FirebaseLoginRequest(id_token="fake-token")
+        )
+        await auth_service.firebase_login(
+            db_session, FirebaseLoginRequest(id_token="fake-token")
+        )
+
+    identity = await oauth_identity_repository.get_by_provider_user_id(
+        db_session, provider=OAuthProvider.phone, provider_user_id="phone-uid-repeat"
+    )
+    assert identity is not None  # ผ่าน unique constraint = ไม่ได้ insert ซ้ำ
+
+
+# --- unsupported provider ---
+
+
+async def test_firebase_unsupported_provider_rejected(
+    db_session: AsyncSession,
+) -> None:
+    """sign_in_provider ที่ backend ยังไม่รองรับ (เช่น apple.com) → 401."""
+    payload = _firebase_payload(email="apple@test.example")
+    payload["firebase"]["sign_in_provider"] = "apple.com"
+    with patch(
+        "app.services.auth_service.firebase_auth.verify_id_token",
+        return_value=payload,
+    ):
+        with pytest.raises(OAuthTokenInvalid) as exc_info:
+            await auth_service.firebase_login(
+                db_session, FirebaseLoginRequest(id_token="fake-token")
+            )
     assert exc_info.value.status_code == 401

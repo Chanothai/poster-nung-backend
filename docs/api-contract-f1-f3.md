@@ -33,7 +33,8 @@
 | POST | `/auth/verify-otp` | `email, code` | `200` TokenResponse *(verify ผ่าน = auto-login)* | `400` OTP_INVALID · `400` OTP_EXPIRED · `409` ACCOUNT_ALREADY_VERIFIED · `429` OTP_LOCKED · `429` OTP_RATE_LIMITED · `404` USER_NOT_FOUND |
 | POST | `/auth/login` | `email, password` | `200` TokenResponse | `401` INVALID_CREDENTIALS · `403` ACCOUNT_NOT_VERIFIED · `429` LOGIN_RATE_LIMITED |
 | POST | `/auth/refresh` | `refresh_token` | `200` TokenResponse | `401` REFRESH_TOKEN_INVALID |
-| POST | `/auth/google` | `id_token` (Firebase ID token จาก Firebase Auth/Google sign-in บน mobile) | `200` TokenResponse *(find-or-create + auto-login)* | `401` OAUTH_TOKEN_INVALID · `403` OAUTH_EMAIL_NOT_VERIFIED · `409` OAUTH_LOGIN_CONFLICT · `422` VALIDATION_ERROR · `503` OAUTH_PROVIDER_NOT_CONFIGURED |
+| POST | `/auth/firebase` | `id_token` (Firebase ID token — email/password, phone-OTP, หรือ Google) | `200` TokenResponse *(find-or-create + auto-login)* | `401` OAUTH_TOKEN_INVALID · `403` OAUTH_EMAIL_NOT_VERIFIED · `409` OAUTH_LOGIN_CONFLICT · `422` VALIDATION_ERROR · `503` OAUTH_PROVIDER_NOT_CONFIGURED |
+| POST | `/auth/google` | *(deprecated — alias ของ `/auth/firebase`, พฤติกรรมเหมือนกันทุกอย่าง)* | เหมือน `/auth/firebase` | เหมือน `/auth/firebase` |
 
 ### Auth (protected) — `/auth` ต้องแนบ `Authorization: Bearer <access_token>`
 
@@ -73,10 +74,10 @@
 | `ACCOUNT_ALREADY_VERIFIED` | 409 | `POST /auth/verify-otp` | บัญชี verify แล้ว เรียก verify ซ้ำ |
 | `LOGIN_RATE_LIMITED` | 429 | `POST /auth/login` | login ถี่เกินไป |
 | `REFRESH_TOKEN_INVALID` | 401 | `POST /auth/refresh` | token ผิด/หมดอายุ/ถูก revoke |
-| `OAUTH_TOKEN_INVALID` | 401 | `POST /auth/google` | Firebase id_token verify ไม่ผ่าน (ผิด/หมดอายุ/audience=project ไม่ตรง) |
-| `OAUTH_EMAIL_NOT_VERIFIED` | 403 | `POST /auth/google` | token บอกว่า email ยังไม่ verified — ปฏิเสธ ไม่ auto-link |
-| `OAUTH_LOGIN_CONFLICT` | 409 | `POST /auth/google` | แพ้ race ระหว่าง link บัญชี — ให้ client retry (id_token ยังใช้ได้) |
-| `OAUTH_PROVIDER_NOT_CONFIGURED` | 503 | `POST /auth/google` | ยังไม่ได้ตั้ง `FIREBASE_PROJECT_ID` บน environment นี้ |
+| `OAUTH_TOKEN_INVALID` | 401 | `POST /auth/firebase` | Firebase id_token verify ไม่ผ่าน (ผิด/หมดอายุ/audience=project ไม่ตรง) หรือ sign_in_provider ที่ยังไม่รองรับ |
+| `OAUTH_EMAIL_NOT_VERIFIED` | 403 | `POST /auth/firebase` | provider password/google บอกว่า email ยังไม่ verified — ปฏิเสธ ไม่ auto-link |
+| `OAUTH_LOGIN_CONFLICT` | 409 | `POST /auth/firebase` | แพ้ race ระหว่าง link บัญชี — ให้ client retry (id_token ยังใช้ได้) |
+| `OAUTH_PROVIDER_NOT_CONFIGURED` | 503 | `POST /auth/firebase` | ยังไม่ได้ตั้ง `FIREBASE_PROJECT_ID` / service account บน environment นี้ |
 | `POSTER_NOT_FOUND` | 404 | `GET /posters/{id}`, `POST /cart/reserve/{id}` | ไม่มีโปสเตอร์นี้ |
 | `UNAUTHORIZED` | 401 | ทุก endpoint ที่ต้อง login | ไม่มี/token ผิด |
 | **`POSTER_NOT_AVAILABLE`** | **409** | `POST /cart/reserve/{id}` | **โปสเตอร์ถูกจอง/ขายไปแล้ว — ผลตรงของ concurrency defense (`FOR UPDATE`)** |
@@ -112,21 +113,26 @@
 
 ---
 
-## 6. จุดวิกฤต — `POST /auth/google` account linking
+## 6. จุดวิกฤต — `POST /auth/firebase` unified Firebase login + account linking
 
-- **Verify แบบ Firebase** — mobile sign-in Google ผ่าน Firebase Auth แล้วส่ง **Firebase ID token** มา; backend verify ด้วย **`firebase-admin` SDK** (`firebase_admin.auth.verify_id_token(..., check_revoked=True)`) — ต้องตั้ง `FIREBASE_PROJECT_ID` (`posternung` ทุก env, public) **และ `FIREBASE_SERVICE_ACCOUNT_JSON`** (service account credential, **secret** — ได้จาก Firebase console) · `check_revoked=True` reject token ที่ถูก revoke หรือ user ถูก disable (ข้อได้เปรียบเหนือ google-auth `verify_firebase_token` เดิม)
-- **Auto-link ด้วย email** เท่านั้นเมื่อ token ยืนยันว่า `email_verified=true` — ไม่เชื่อ email ที่ยัง unverified (คืน `403 OAUTH_EMAIL_NOT_VERIFIED`) กันเอา email มั่วมาผูกกับบัญชีคนอื่น
-- **`oauth_identities` แยกตาราง** จาก `users` — `provider_user_id` = **Firebase `uid`** (`sub` claim ของ Firebase token) เป็น key ที่เสถียรต่อ user ใน project ไม่ใช้ email เป็น key เพราะเปลี่ยนได้ ผูก user เดิม (ที่สมัคร email/password ไว้แล้ว) เข้ากับ identity ได้โดยไม่ทับ/ลบรหัสผ่านเดิม — และถ้ายังไม่ verify มาก่อน จะ auto-verify ให้ทันที
+> `/auth/google` = **deprecated alias** ของ endpoint นี้ (พฤติกรรมเหมือนกันทุกอย่าง — คงไว้กัน client เดิมพัง). client ใหม่ใช้ `/auth/firebase`
+
+- **Endpoint เดียวรองรับทุก provider** — client sign-in ผ่าน Firebase Auth (email/password, phone SMS-OTP, หรือ Google) แล้วส่ง **Firebase ID token** (`getIdToken()`) มา; backend อ่าน claim **`firebase.sign_in_provider`** เพื่อแยกจัดการ (map: `password`→`password`, `google.com`→`google`, `phone`→`phone`; provider อื่น → `401 OAUTH_TOKEN_INVALID`)
+- **Verify แบบ Firebase** — verify ด้วย **`firebase-admin` SDK** (`firebase_admin.auth.verify_id_token(..., check_revoked=True)`) — ต้องตั้ง `FIREBASE_PROJECT_ID` (`posternung` ทุก env, public) **และ `FIREBASE_SERVICE_ACCOUNT_JSON`** (service account credential, **secret** — ได้จาก Firebase console) · `check_revoked=True` reject token ที่ถูก revoke หรือ user ถูก disable
+- **`password` / `google.com`** — ต้องมี `email` + `email_verified=true` (ไม่งั้น `403 OAUTH_EMAIL_NOT_VERIFIED`); auto-link เข้า user เดิมที่ email ตรงกันได้ (สร้าง User มี email) — กัน email มั่วมาผูกกับบัญชีคนอื่น
+- **`phone`** — SMS OTP ยืนยันโดย Firebase แล้ว (token = ยืนยันสำเร็จ) จึง **ข้ามเช็ค email**; สร้าง User แบบ **`email=NULL`** + `phone=<phone_number claim>` (E.164), จับคู่ด้วย Firebase `uid` เท่านั้น (ไม่ auto-link ด้วย email เพราะไม่มี). OTP ของ phone auth ส่ง/verify ที่ Firebase ทั้งหมด — **backend เราไม่ได้ส่ง SMS เอง**
+- **`users.email` เป็น nullable** (migration `f1b2a3c4d5e6`) — รองรับ phone-only user · unique constraint บน nullable email = Postgres ยอมหลาย `NULL` ได้
+- **`oauth_identities` แยกตาราง** จาก `users` — `provider_user_id` = **Firebase `uid`** (`sub` claim) เป็น key ที่เสถียรต่อ user ใน project ไม่ใช้ email เป็น key เพราะเปลี่ยนได้ ผูก user เดิม (ที่สมัคร email/password ไว้แล้ว) เข้ากับ identity ได้โดยไม่ทับ/ลบรหัสผ่านเดิม — และถ้ายังไม่ verify มาก่อน จะ auto-verify ให้ทันที
 - **Race condition** (สอง request login account เดียวกันครั้งแรกพร้อมกัน) ป้องกันด้วย `session.begin_nested()` (savepoint) + `IntegrityError` handling — ถ้าแพ้ race จะ retry อ่าน identity ที่อีกฝั่งสร้างไว้ก่อน ถ้ายังหาไม่เจอ (กรณีที่แปลกมาก) คืน `409 OAUTH_LOGIN_CONFLICT` ให้ client เรียกซ้ำ (id_token ยังใช้ได้ไม่กี่นาที)
-- **`users.hashed_password` เป็น nullable** — user ที่สมัครผ่าน social อย่างเดียวไม่มีรหัสผ่าน; `POST /auth/login` ด้วย email นี้จะได้ `401 INVALID_CREDENTIALS` เหมือน password ผิดทุกประการ (constant-time dummy-verify กันบอกว่า account ใช้ auth method ไหน)
-- **`provider` ยังเป็น `google`** (sign-in method ที่ mobile ใช้ตอนนี้) — ถ้าเพิ่ม Firebase sign-in provider อื่น (Apple ฯลฯ) ภายหลัง ค่อยทบทวน key/provider · **หมายเหตุ:** ทุก env ใช้ Firebase project เดียว → token จาก app คนละ env verify ผ่าน backend ทุก env (แยก env จาก token ไม่ได้ ถ้าต้องการแยกต้องแยก Firebase project)
+- **`users.hashed_password` เป็น nullable** — user ที่สมัครผ่าน Firebase อย่างเดียวไม่มีรหัสผ่าน local; `POST /auth/login` (local bcrypt) ด้วย email นี้จะได้ `401 INVALID_CREDENTIALS` เหมือน password ผิดทุกประการ (constant-time dummy-verify กันบอกว่า account ใช้ auth method ไหน)
+- **`OAuthProvider` enum** = `google` · `password` · `phone` (migration `f1b2a3c4d5e6` เพิ่ม 2 ค่าหลังด้วย recreate-type ให้ downgrade กลับได้) · **หมายเหตุ:** ทุก env ใช้ Firebase project เดียว → token จาก app คนละ env verify ผ่าน backend ทุก env (แยก env จาก token ไม่ได้ ถ้าต้องการแยกต้องแยก Firebase project)
 - **Platform-agnostic (ยืนยันแล้วด้วยไฟล์ config จริงทั้ง iOS + Android)** — `verify_id_token` เช็คแค่ `aud`/`iss` ระดับ **project** เท่านั้น ไม่แตะ platform-specific field ใดๆ (OAuth client_id, api_key, package/bundle id) ที่อยู่ใน `GoogleService-Info.plist`/`google-services.json` — field พวกนั้นฝั่ง mobile SDK ใช้คุยกับ Google/Firebase เองก่อนได้ token มา backend ไม่เกี่ยว ตรวจแล้ว Android `google-services.json` ทั้ง 3 env มี `project_id: "posternung"` ตรงกับ iOS เป๊ะ (project เดียวกัน) → **endpoint เดิมรองรับ Android ได้ทันทีโดยไม่ต้องแก้โค้ดฝั่ง backend เลย**
 
 ---
 
 ## 7. Schema สรุป (รายละเอียดเต็มใน `openapi.yaml` → `components.schemas`)
 
-- **Request:** `RegisterRequest`, `LoginRequest`, `OTPVerifyRequest`, `RefreshRequest`, `GoogleLoginRequest`
+- **Request:** `RegisterRequest`, `LoginRequest`, `OTPVerifyRequest`, `RefreshRequest`, `FirebaseLoginRequest` (`GoogleLoginRequest` = deprecated alias)
 - **Response:** `UserResponse` (ไม่มี `hashed_password`), `TokenResponse`, `PosterListItem`, `PosterDetailResponse` (extends `PosterListItem` + authenticity/provenance/images), `PaginatedPosterList`, `ReservationResponse`
 - **Error:** `ErrorResponse{error_code, message, details}`, `ValidationErrorDetail{field, message}`
 - **Enum ที่ใช้ตรงกับ `database-design.md`:** `PosterStatus`, `ReservationStatus`, `PosterCondition`, `OAuthProvider`
