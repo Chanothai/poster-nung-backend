@@ -176,9 +176,15 @@ def _ensure_firebase_app() -> None:
     global _firebase_initialized
     if _firebase_initialized:
         return
-    cred = firebase_credentials.Certificate(
-        json.loads(settings.FIREBASE_SERVICE_ACCOUNT_JSON)
-    )
+    if settings.FIREBASE_SERVICE_ACCOUNT_PATH:
+        # best practice (prod): อ่านจากไฟล์ — key ไม่อยู่ใน env. path นี้เป็น path
+        # ในคอนเทนเนอร์ (bind-mount read-only จาก host — ดู docker-compose.production.yml)
+        cred = firebase_credentials.Certificate(settings.FIREBASE_SERVICE_ACCOUNT_PATH)
+    else:
+        # fallback (dev/test/legacy): เนื้อ JSON ทั้งก้อนใน env var
+        cred = firebase_credentials.Certificate(
+            json.loads(settings.FIREBASE_SERVICE_ACCOUNT_JSON)
+        )
     firebase_admin.initialize_app(cred, {"projectId": settings.FIREBASE_PROJECT_ID})
     _firebase_initialized = True
 
@@ -197,7 +203,9 @@ async def firebase_login(
     """Mobile login ผ่าน Firebase (email/password, phone-OTP, หรือ Google) — client
     sign-in ด้วย Firebase Auth แล้วส่ง ID token มา backend verify + find-or-create user
     + ออก JWT ชุดเดียวกับ login ปกติ. รองรับทุก sign-in provider ผ่าน endpoint เดียว."""
-    if not settings.FIREBASE_PROJECT_ID or not settings.FIREBASE_SERVICE_ACCOUNT_JSON:
+    if not settings.FIREBASE_PROJECT_ID or not (
+        settings.FIREBASE_SERVICE_ACCOUNT_JSON or settings.FIREBASE_SERVICE_ACCOUNT_PATH
+    ):
         raise OAuthProviderNotConfigured()
 
     _ensure_firebase_app()

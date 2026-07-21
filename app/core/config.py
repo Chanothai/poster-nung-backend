@@ -45,8 +45,15 @@ class Settings(BaseSettings):
     # Firebase service account credential (เนื้อ JSON ทั้งก้อนเป็น string) — **secret**
     # ได้จาก Firebase console → Project settings → Service accounts → Generate new
     # private key. firebase-admin ใช้ init app เพื่อ verify_id_token (+ check_revoked)
-    # ว่าง → google_login คืน 503 OAUTH_PROVIDER_NOT_CONFIGURED (เหมือน FIREBASE_PROJECT_ID)
+    # ว่าง → firebase_login คืน 503 OAUTH_PROVIDER_NOT_CONFIGURED (เหมือน FIREBASE_PROJECT_ID)
+    # ใช้เป็น fallback สำหรับ dev/test เป็นหลัก — prod แนะนำ ..._PATH ข้างล่างแทน
     FIREBASE_SERVICE_ACCOUNT_JSON: str = ""
+
+    # Path ไปยังไฟล์ service account JSON (best practice ฝั่ง prod) — key ไม่อยู่ใน env
+    # จึงไม่โผล่ใน `docker inspect .Config.Env`/env dump. ตั้งค่านี้คู่กับ read-only
+    # bind-mount ไฟล์เข้า container (ดู docker-compose.production.yml). ถ้าตั้ง PATH นี้
+    # จะถูกใช้ก่อน ..._JSON เสมอ (ดู auth_service._ensure_firebase_app)
+    FIREBASE_SERVICE_ACCOUNT_PATH: str = ""
 
     # ---- CORS ----
     # NoDecode = ข้าม JSON-decode ของ pydantic-settings ให้ raw string ถึง validator
