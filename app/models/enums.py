@@ -35,4 +35,8 @@ class PosterCondition(str, enum.Enum):
 
 
 class OAuthProvider(str, enum.Enum):
+    # map จาก Firebase token claim firebase.sign_in_provider:
+    #   google.com -> google · password -> password · phone -> phone
     google = "google"
+    password = "password"
+    phone = "phone"

@@ -222,24 +222,29 @@ paths:
                 message: Refresh token ไม่ถูกต้องหรือหมดอายุ กรุณาเข้าสู่ระบบใหม่
                 details: null
 
-  /auth/google:
+  /auth/firebase:
     post:
       tags: [Auth]
-      summary: Mobile login ผ่าน Google (Firebase ID token)
+      summary: Mobile login ผ่าน Firebase (email/password, phone-OTP, หรือ Google)
       description: >
-        client (mobile app) sign-in ด้วย Google ผ่าน Firebase Auth ก่อน แล้ว
-        ส่ง Firebase ID token ที่ได้มาที่ endpoint นี้ — backend verify token
-        กับ Firebase project (audience), find-or-create user, auto-link เข้าบัญชี
-        email/password เดิมถ้า email ตรงกันและยืนยันแล้ว, แล้วออก JWT ชุดเดียว
-        กับ login ปกติ — ดู docs/api-contract-f1-f3.md §6 สำหรับรายละเอียด
-        account-linking
-      operationId: googleLogin
+        Endpoint เดียวรองรับทุกวิธี sign-in ของ Firebase — client (mobile app)
+        sign-in ด้วย Firebase Auth ก่อน (email/password, phone SMS-OTP, หรือ
+        Google) แล้วส่ง Firebase ID token (`getIdToken()`) มาที่นี่. backend
+        verify token กับ Firebase project แล้วอ่าน claim `firebase.sign_in_provider`
+        เพื่อแยกจัดการ:
+          • `password` / `google.com` — ต้องมี email + `email_verified=true`
+            (ไม่งั้น 403), find-or-create + auto-link บัญชี email เดิม, User มี email
+          • `phone` — SMS OTP ยืนยันโดย Firebase แล้ว (ข้ามเช็ค email), สร้าง User
+            แบบ `email=null` + `phone=<phone_number>`, จับคู่ด้วย Firebase uid เท่านั้น
+          • provider อื่น (เช่น apple.com) — 401 `OAUTH_TOKEN_INVALID`
+        จากนั้นออก JWT ชุดเดียวกับ login ปกติ — ดู docs/api-contract-f1-f3.md §6
+      operationId: firebaseLogin
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/GoogleLoginRequest"
+              $ref: "#/components/schemas/FirebaseLoginRequest"
       responses:
         "200":
           description: ยืนยันตัวตนสำเร็จ (user ใหม่หรือเดิมก็ได้ token ชุดเดียวกัน)
@@ -248,24 +253,90 @@ paths:
               schema:
                 $ref: "#/components/schemas/TokenResponse"
         "401":
-          description: id_token verify กับ Google ไม่ผ่าน (ผิด/หมดอายุ/audience ไม่ตรง)
+          description: >
+            verify id_token ไม่ผ่าน (ผิด/หมดอายุ/audience ไม่ตรง/ถูก revoke) หรือ
+            sign_in_provider ที่ backend ยังไม่รองรับ
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
               example:
                 error_code: OAUTH_TOKEN_INVALID
-                message: ไม่สามารถยืนยันตัวตนกับ Google ได้ กรุณาลองใหม่
+                message: ไม่สามารถยืนยันตัวตนได้ กรุณาลองใหม่
                 details: null
         "403":
-          description: Google บอกว่า email ของบัญชีนี้ยังไม่ยืนยัน
+          description: provider ที่ต้องมี email (password/google) แต่ email ยังไม่ยืนยัน
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
               example:
                 error_code: OAUTH_EMAIL_NOT_VERIFIED
-                message: บัญชี Google นี้ยังไม่ได้ยืนยันอีเมล
+                message: บัญชีนี้ยังไม่ได้ยืนยันอีเมล
+                details: null
+        "409":
+          description: แพ้ race ระหว่าง link บัญชี — client เรียกซ้ำได้ (id_token ยังใช้ได้)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: OAUTH_LOGIN_CONFLICT
+                message: เกิดข้อขัดแย้งระหว่างเข้าสู่ระบบ กรุณาลองใหม่อีกครั้ง
+                details: null
+        "503":
+          description: ยังไม่ได้ตั้งค่า FIREBASE_PROJECT_ID / service account บน environment นี้
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: OAUTH_PROVIDER_NOT_CONFIGURED
+                message: ระบบยังไม่ได้ตั้งค่า Firebase login กรุณาติดต่อผู้ดูแลระบบ
+                details: null
+
+  /auth/google:
+    post:
+      tags: [Auth]
+      deprecated: true
+      summary: "[Deprecated] ใช้ POST /auth/firebase แทน"
+      description: >
+        **Deprecated** — คงไว้กัน client เดิมพังเท่านั้น. ทำงานเหมือน
+        POST /auth/firebase ทุกประการ (อ่าน `sign_in_provider` จาก token เอง
+        จึงรับได้ทุก provider ไม่ใช่แค่ Google). client ใหม่ให้ใช้ /auth/firebase
+      operationId: googleLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FirebaseLoginRequest"
+      responses:
+        "200":
+          description: ยืนยันตัวตนสำเร็จ (user ใหม่หรือเดิมก็ได้ token ชุดเดียวกัน)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: id_token verify ไม่ผ่าน หรือ provider ที่ยังไม่รองรับ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: OAUTH_TOKEN_INVALID
+                message: ไม่สามารถยืนยันตัวตนได้ กรุณาลองใหม่
+                details: null
+        "403":
+          description: email ของบัญชีนี้ยังไม่ยืนยัน (provider ที่ต้องมี email)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error_code: OAUTH_EMAIL_NOT_VERIFIED
+                message: บัญชีนี้ยังไม่ได้ยืนยันอีเมล
                 details: null
         "409":
           description: แพ้ race ระหว่าง link บัญชี — client เรียกซ้ำได้ (id_token ยังใช้ได้)
@@ -285,7 +356,7 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
               example:
                 error_code: OAUTH_PROVIDER_NOT_CONFIGURED
-                message: ระบบยังไม่ได้ตั้งค่า Google login กรุณาติดต่อผู้ดูแลระบบ
+                message: ระบบยังไม่ได้ตั้งค่า Firebase login กรุณาติดต่อผู้ดูแลระบบ
                 details: null
 
   /auth/me:
@@ -604,16 +675,21 @@ components:
         refresh_token:
           type: string
 
-    GoogleLoginRequest:
+    FirebaseLoginRequest:
       type: object
       required: [id_token]
       properties:
         id_token:
           type: string
           description: >
-            Firebase ID token (JWT ที่ Firebase เซ็นให้) จาก Firebase Auth
-            (Google sign-in) บน mobile app — backend verify กับ Firebase project
-            (audience) เอง ไม่ต้องส่ง Google access_token มาด้วย
+            Firebase ID token (JWT ที่ Firebase เซ็นให้) จาก Firebase Auth บน
+            mobile app — ได้มาจาก email/password, phone SMS-OTP, หรือ Google
+            sign-in ก็ได้ (backend อ่าน sign_in_provider จาก token เอง). verify
+            กับ Firebase project (audience) เอง ไม่ต้องส่ง access_token อื่นมาด้วย
+
+    # deprecated alias — ชื่อเดิมสมัยรองรับแค่ Google (schema เดียวกับ FirebaseLoginRequest)
+    GoogleLoginRequest:
+      $ref: "#/components/schemas/FirebaseLoginRequest"
 
     # ── response schemas ──
     UserResponse:
@@ -624,7 +700,8 @@ components:
           type: string
           format: uuid
         email:
-          type: string
+          # nullable — phone-only user (Firebase Phone Auth) ไม่มี email
+          type: [string, "null"]
           format: email
         phone:
           type: [string, "null"]
