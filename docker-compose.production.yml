@@ -5,6 +5,12 @@ services:
     container_name: posternung-production-app
     env_file: !override        # แทนที่ base [.env] ด้วย .env.production (ไม่ใช่ !reset ที่ลบทิ้ง)
       - .env.production        # config ของ production (DEBUG/DOCS ต้อง false — config validator บังคับ)
+    volumes:
+      # Firebase service account credential — mount ไฟล์จาก host เข้า container แบบ
+      # read-only (key ไม่อยู่ใน env → ปลอดภัยกว่า inline JSON). FIREBASE_SA_HOST_PATH
+      # = absolute path บน host (ตั้งใน .env.production) · container path fix ตรงกับ
+      # FIREBASE_SERVICE_ACCOUNT_PATH=/run/secrets/firebase-sa.json ที่แอปอ่าน
+      - ${FIREBASE_SA_HOST_PATH:?FIREBASE_SA_HOST_PATH ต้องตั้งใน .env.production}:/run/secrets/firebase-sa.json:ro
   db:
     container_name: posternung-production-db
     ports: !reset []           # ไม่ expose DB port ออกนอก host (เข้าถึงได้เฉพาะใน docker network)
