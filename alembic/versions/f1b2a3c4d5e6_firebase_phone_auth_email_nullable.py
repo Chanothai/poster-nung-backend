@@ -36,9 +36,7 @@ def upgrade() -> None:
     op.execute("DROP TYPE oauth_provider_old")
 
     # --- email → nullable (phone-only user ไม่มี email) ---
-    op.alter_column(
-        "users", "email", existing_type=postgresql.CITEXT(), nullable=True
-    )
+    op.alter_column("users", "email", existing_type=postgresql.CITEXT(), nullable=True)
     op.alter_column(
         "oauth_identities", "email", existing_type=postgresql.CITEXT(), nullable=True
     )
@@ -59,9 +57,7 @@ def downgrade() -> None:
     op.alter_column(
         "oauth_identities", "email", existing_type=postgresql.CITEXT(), nullable=False
     )
-    op.alter_column(
-        "users", "email", existing_type=postgresql.CITEXT(), nullable=False
-    )
+    op.alter_column("users", "email", existing_type=postgresql.CITEXT(), nullable=False)
 
     # oauth_provider กลับเหลือแค่ google (recreate type)
     op.execute("ALTER TYPE oauth_provider RENAME TO oauth_provider_old")
